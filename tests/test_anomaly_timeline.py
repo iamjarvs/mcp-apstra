@@ -382,6 +382,59 @@ class TestBackfill:
 
         store.close()
 
+    async def test_persistent_anomaly_gets_synthetic_raise_event(self):
+        """BGP/cabling anomalies with detected_at pre-dating the window have no
+        trace events within 7 days.  The poller should write a synthetic raise."""
+        from handlers.anomaly_poller import _backfill
+
+        store = make_store()
+        session = MagicMock()
+        session.name = INST
+
+        persistent = {
+            **BGP_A,
+            "detected_at": "2026-01-29T20:00:24Z",  # 70 days ago — before trace window
+        }
+
+        with (
+            patch("handlers.anomaly_poller.live_data_client.get_anomaly_history_snapshot",
+                  new_callable=AsyncMock, return_value={"items": [persistent]}),
+            patch("handlers.anomaly_poller.live_data_client.get_anomalies",
+                  new_callable=AsyncMock, return_value={"items": [persistent]}),
+            patch("handlers.anomaly_poller.live_data_client.get_anomaly_trace",
+                  new_callable=AsyncMock, return_value={"items": []}),
+            patch("handlers.anomaly_poller.live_data_client.get_anomaly_history_counts",
+                  new_callable=AsyncMock,
+                  return_value={"counts": {"bgp": [{"count": 4, "timestamp": "2026-04-10T00:00:00Z"}]}}),
+        ):
+            await _backfill(session, BP, store)
+
+        active = store.get_currently_active(BP)
+        assert any(a["anomaly_type"] == "bgp" for a in active), \
+            "persistent BGP anomaly should appear as active via synthetic raise event"
+        events = store.query_events(BP, anomaly_type="bgp")
+        assert any(e.get("source") == "synthetic_raise" for e in events)
+        store.close()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# _norm_ts helper
+# ════════════════════════════════════════════════════════════════════════════
+
+class TestNormTs:
+    def test_z_suffix_unchanged(self):
+        from handlers.anomaly_poller import _norm_ts
+        assert _norm_ts("2026-04-10T12:00:00Z") == "2026-04-10T12:00:00Z"
+
+    def test_plus00_replaced_with_z(self):
+        from handlers.anomaly_poller import _norm_ts
+        assert _norm_ts("2026-04-10T12:00:00+00:00") == "2026-04-10T12:00:00Z"
+
+    def test_other_suffix_unchanged(self):
+        from handlers.anomaly_poller import _norm_ts
+        result = _norm_ts("2026-04-10T12:00:00.123456Z")
+        assert result.endswith("Z")
+
 
 # ════════════════════════════════════════════════════════════════════════════
 # Poller — incremental poll (mocked)

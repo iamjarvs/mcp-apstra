@@ -154,6 +154,7 @@ async def _backfill(session, blueprint_id: str, store: AnomalyStore) -> None:
     for item in snapshots:
         a = item["anomaly"]
         aid = store.upsert_anomaly(blueprint_id, session.name, a)
+        events_written = 0
         try:
             trace_raw = await live_data_client.get_anomaly_trace(
                 session, blueprint_id,
@@ -165,14 +166,27 @@ async def _backfill(session, blueprint_id: str, store: AnomalyStore) -> None:
                 if not ts_val or ts_val.startswith("1970"):
                     continue
                 written = store.insert_event(
-                    aid, ts_val, bool(ev.get("raised")),
+                    aid, _norm_ts(ts_val), bool(ev.get("raised")),
                     ev.get("actual"), source="trace_backfill",
                 )
                 if written:
                     total_events += 1
+                    events_written += 1
         except Exception as exc:
             log.debug("[%s/%s] trace failed for %s: %s",
                       session.name, blueprint_id[:8], a.get("anomaly_type"), exc)
+
+        # Persistent anomalies (e.g. BGP down since Jan) have no trace events
+        # within the 7-day window.  Write a synthetic raise event anchored to
+        # their detected_at so they appear in the store as currently active.
+        if events_written == 0:
+            detected = a.get("detected_at") or ""
+            if detected and not detected.startswith("1970"):
+                store.insert_event(
+                    aid, _norm_ts(detected), raised=True,
+                    actual=a.get("actual"), source="synthetic_raise",
+                )
+                total_events += 1
 
     # ── Step 4: snapshot current state as baseline for incremental polling ───
     try:
@@ -232,7 +246,7 @@ async def _incremental_poll(session, blueprint_id: str, store: AnomalyStore) -> 
         return
 
     prev_snapshot = state.get("last_snapshot", {})
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = _norm_ts(datetime.now(timezone.utc).isoformat())
 
     new_keys     = set(current_snapshot) - set(prev_snapshot)
     cleared_keys = set(prev_snapshot) - set(current_snapshot)
@@ -268,6 +282,7 @@ async def _incremental_poll(session, blueprint_id: str, store: AnomalyStore) -> 
 
 async def _trace_new_identity(session, blueprint_id, a, aid, store):
     """Trace a newly-discovered identity and backfill its recent history."""
+    events_written = 0
     try:
         raw = await live_data_client.get_anomaly_trace(
             session, blueprint_id,
@@ -278,13 +293,22 @@ async def _trace_new_identity(session, blueprint_id, a, aid, store):
             ts_val = ev.get("detected_at") or ev.get("timestamp")
             if not ts_val or ts_val.startswith("1970"):
                 continue
-            store.insert_event(
-                aid, ts_val, bool(ev.get("raised")),
+            written = store.insert_event(
+                aid, _norm_ts(ts_val), bool(ev.get("raised")),
                 ev.get("actual"), source="trace_incremental",
             )
+            if written:
+                events_written += 1
     except Exception as exc:
         log.debug("trace for new identity %s failed: %s",
                   a.get("anomaly_type"), exc)
+    if events_written == 0:
+        detected = a.get("detected_at") or ""
+        if detected and not detected.startswith("1970"):
+            store.insert_event(
+                aid, _norm_ts(detected), raised=True,
+                actual=a.get("actual"), source="synthetic_raise",
+            )
 
 
 # ── API helpers ───────────────────────────────────────────────────────────────
@@ -319,3 +343,11 @@ def _counts_changed(prev: dict, current: dict) -> bool:
     """True if any anomaly type's count differs between the two dicts."""
     all_types = set(prev) | set(current)
     return any(prev.get(t, 0) != current.get(t, 0) for t in all_types)
+
+
+def _norm_ts(ts: str) -> str:
+    """Normalise Apstra timestamp variants to a consistent UTC Z-suffix string."""
+    # Replace +00:00 suffix with Z for uniform sorting
+    if ts.endswith("+00:00"):
+        return ts[:-6] + "Z"
+    return ts
