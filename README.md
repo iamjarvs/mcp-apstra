@@ -1,4 +1,4 @@
-# mcp-apstra
+# apstra-mcp
 
 A [FastMCP](https://github.com/jlowin/fastmcp) server that exposes Juniper Apstra data centre network management capabilities as tools for LLM agents. Connect Claude, Cursor, or any MCP-compatible AI assistant directly to your Apstra fabric — query anomalies, inspect BGP peerings, audit MTU, diff configlets, and run CLI commands across entire fabrics in parallel.
 
@@ -98,27 +98,75 @@ export APSTRA_DC_PRIMARY_PASSWORD=secretpassword
 
 ## Running the server
 
-### stdio (default — for Claude Desktop, Cursor, etc.)
+The server has two entry points depending on use case:
+
+| Entry point | When to use |
+|-------------|-------------|
+| `python server.py` | Standalone HTTP server — remote clients, Docker, always-on deployments |
+| `fastmcp run server.py` | stdio — local MCP clients like Claude Desktop and Cursor |
+
+### Standalone HTTP server
+
+Run `server.py` directly and configure it with environment variables:
 
 ```bash
+MCP_TRANSPORT=http MCP_PORT=8000 python server.py
+```
+
+All supported environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_TRANSPORT` | `stdio` | Set to `http` to enable the HTTP/SSE transport. Any other value falls back to stdio. |
+| `MCP_HOST` | `0.0.0.0` | Interface to bind to. Use `127.0.0.1` to restrict to localhost only. |
+| `MCP_PORT` | `8000` | TCP port to listen on. |
+| `MCP_VERBOSE` | _(unset)_ | Set to any non-empty value (e.g. `1`) to enable debug logging, per-request timing, and full payload inspection. |
+
+Examples:
+
+```bash
+# Minimal — listen on all interfaces, port 8000
+MCP_TRANSPORT=http MCP_PORT=8000 python server.py
+
+# Specific port, localhost only
+MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9000 python server.py
+
+# HTTP with verbose debug logging
+MCP_TRANSPORT=http MCP_PORT=8000 MCP_VERBOSE=1 python server.py
+```
+
+Once running, the MCP endpoint is available at:
+
+```
+http://<host>:<port>/mcp
+```
+
+### stdio (for Claude Desktop, Cursor, etc.)
+
+```bash
+python server.py
+# or equivalently
 fastmcp run server.py
-# or
-.venv/bin/fastmcp run server.py
 ```
 
-### HTTP transport
-
-```bash
-MCP_TRANSPORT=http MCP_HOST=0.0.0.0 MCP_PORT=8000 fastmcp run server.py
-```
+`MCP_TRANSPORT` defaults to `stdio` so no env var is needed.
 
 ### Debug / verbose mode
 
-Enables per-request logging, timing middleware, and payload inspection:
+Enable detailed logging on either transport:
 
 ```bash
-MCP_VERBOSE=1 fastmcp run server.py
+# stdio with verbose output
+MCP_VERBOSE=1 python server.py
+
+# HTTP with verbose output
+MCP_TRANSPORT=http MCP_PORT=8000 MCP_VERBOSE=1 python server.py
 ```
+
+Verbose mode activates:
+- `DEBUG`-level logging with timestamps
+- Per-request timing middleware
+- Full request/response payload logging (truncated at 2000 characters)
 
 ### Smoke-test auth independently
 
