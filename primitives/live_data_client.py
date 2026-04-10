@@ -188,3 +188,77 @@ async def delete_fetchcmd(session, request_id: str) -> None:
     ignored by the caller.
     """
     await _request(session, "DELETE", f"/api/telemetry/fetchcmd/{request_id}")
+
+
+# ── Anomaly history / time-series APIs ────────────────────────────────────────
+
+async def get_anomaly_history_counts(
+    session,
+    blueprint_id: str,
+    begin_time: str = "-7:0",
+) -> dict:
+    """
+    Returns a count-change timeseries for each anomaly type over the
+    requested window.
+
+    `begin_time` uses Apstra's relative format: "-<days>:<seconds>", e.g.
+    "-7:0" for seven days ago. The window always ends at the current time.
+
+    Response shape: {"counts": {"bgp": [{"count": N, "timestamp": "..."}], ...}}
+    Each list entry represents a moment when the count for that type changed.
+    """
+    body: dict = {}
+    if begin_time:
+        body["begin_time"] = begin_time
+    return await _request(
+        session, "POST",
+        f"/api/blueprints/{blueprint_id}/anomalies-history/counts",
+        body=body,
+    )
+
+
+async def get_anomaly_history_snapshot(
+    session,
+    blueprint_id: str,
+    timestamp: str,
+) -> dict:
+    """
+    Returns the full set of anomalies that were active at the given
+    point-in-time timestamp (ISO-8601 UTC string).
+
+    Response shape: {"items": [{anomaly}], "request": {...}}
+    Each item includes: identity, expected, actual, detected_at, raised,
+    anomaly_type, device_hostname, role.
+    """
+    return await _request(
+        session, "POST",
+        f"/api/blueprints/{blueprint_id}/anomalies-history",
+        body={"timestamp": timestamp},
+    )
+
+
+async def get_anomaly_trace(
+    session,
+    blueprint_id: str,
+    anomaly_type: str,
+    identity: dict,
+    begin_time: str = "-7:0",
+) -> dict:
+    """
+    Returns the full raise/clear event log for a single specific anomaly
+    identity over the requested window.
+
+    `identity` must be the complete identity dict as returned by the anomaly
+    API — it uniquely identifies one anomaly (e.g. a specific BGP session).
+
+    Response shape: {"items": [{raised, detected_at, actual, ...}]}
+    """
+    return await _request(
+        session, "POST",
+        f"/api/blueprints/{blueprint_id}/anomalies-history/trace",
+        body={
+            "begin_time": begin_time,
+            "anomaly_type": anomaly_type,
+            "identity": identity,
+        },
+    )

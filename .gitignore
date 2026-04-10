@@ -1,4 +1,6 @@
-
+# ── Anomaly time-series store ─────────────────────────────────────────────────
+# SQLite DB is written at runtime and should not be committed.
+data/
 # ── Credentials ──────────────────────────────────────────────────────────────
 # instances.yaml contains Apstra hostnames, usernames, and passwords.
 # Never commit it. Copy instances.yaml.example to instances.yaml to get started.

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -7,7 +8,9 @@ from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
 
 from config.settings import load_sessions
+from primitives.anomaly_store import AnomalyStore
 from primitives.graph_client import BlueprintGraphRegistry
+from handlers.anomaly_poller import run_anomaly_poller
 from tools import anomalies as anomalies_tool
 from tools import bgp as bgp_tool
 from tools import blueprints as blueprints_tool
@@ -18,6 +21,7 @@ from tools import config_rendering as config_rendering_tool
 from tools import mtu_check as mtu_check_tool
 from tools import reference as reference_tool
 from tools import systems as systems_tool
+from tools import anomaly_timeline as anomaly_timeline_tool
 from tools import run_commands as run_commands_tool
 from tools import virtual_networks as virtual_networks_tool
 
@@ -26,11 +30,18 @@ from tools import virtual_networks as virtual_networks_tool
 async def lifespan(app):
     sessions = load_sessions()
     registry = BlueprintGraphRegistry()
+    store = AnomalyStore()
     for session in sessions:
         await session.authenticate()
         session.start_background_refresh()
-    yield {"sessions": sessions, "graph_registry": registry}
+    poller_task = asyncio.create_task(
+        run_anomaly_poller(sessions, store),
+        name="anomaly-poller",
+    )
+    yield {"sessions": sessions, "graph_registry": registry, "anomaly_store": store}
+    poller_task.cancel()
     registry.close_all()
+    store.close()
 
 
 mcp = FastMCP(
@@ -53,6 +64,7 @@ mcp = FastMCP(
     ),
 )
 
+anomaly_timeline_tool.register(mcp)
 anomalies_tool.register(mcp)
 bgp_tool.register(mcp)
 blueprints_tool.register(mcp)
