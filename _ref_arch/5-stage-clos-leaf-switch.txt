@@ -1,0 +1,1901 @@
+system {
+    host-name comp-leaf-qfx5110-01;
+}
+chassis {
+    aggregated-devices {
+        ethernet {
+            device-count 2;
+        }
+    }
+}
+interfaces {
+    replace: xe-0/0/0 {
+        description "to.ex4550-191:xe-0/0/5";
+        ether-options {
+            802.3ad ae1;
+        }
+    }
+    replace: xe-0/0/1 {
+        description "to.esxi-host-51";
+        ether-options {
+            802.3ad ae2;
+        }
+    }
+    replace: xe-0/0/2 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/3 {
+        description "to.ex4550-191:xe-0/0/7";
+        flexible-vlan-tagging;
+        native-vlan-id 1;
+        mtu 9216;
+        unit 31 {
+            description "VRF Flow to EX4550-191";
+            vlan-id 31;
+            family inet {
+                mtu 9000
+                address 10.251.31.0/31;
+            }
+        }
+        unit 32 {
+            description "VRF default to EX4550-191";
+            vlan-id 32;
+            family inet {
+                mtu 9000
+                address 10.251.30.8/31;
+            }
+        }
+    }
+    replace: xe-0/0/4 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/5 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/6 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/7 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/8 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/9 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/10 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/11 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/12 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/13 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/14 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/15 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/16 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/17 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/18 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/19 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/20 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/21 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/22 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/23 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/24 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/25 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/26 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/27 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/28 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/29 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/30 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/31 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/32 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/33 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/34 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/35 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/36 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/37 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/38 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/39 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/40 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/41 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/42 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/43 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/44 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/45 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/46 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: xe-0/0/47 {
+        description "to.ex4550-191:xe-0/0/31";
+        mtu 9216;
+        unit 0 {
+            family inet;
+        }
+    }
+    replace: et-0/0/48 {
+        description "facing_compute-spine-ptx-01:et-0/0/2";
+        mtu 9216;
+        unit 0 {
+            family inet {
+                mtu 9170;
+                address 10.1.0.29/31;
+            }
+        }
+    }
+    replace: et-0/0/49 {
+        description "facing_compute-spine-ptx-02:et-0/0/2";
+        mtu 9216;
+        unit 0 {
+            family inet {
+                mtu 9170;
+                address 10.1.0.33/31;
+            }
+        }
+    }
+    replace: et-0/0/50 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/51 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ae1 {
+        description "to.ex4550-191";
+        esi {
+            00:02:00:00:00:00:02:00:00:02;
+            all-active;
+        }
+        aggregated-ether-options {
+            lacp {
+                active;
+                system-id 02:00:00:00:00:02;
+            }
+        }
+        mtu 9216;
+        unit 0 {
+            family ethernet-switching {
+                interface-mode trunk
+                vlan {
+                    members [
+                        vn300
+                        vn301
+                        vn310
+                        vn311
+                        vn1030
+                        vn2001
+                        vn2002
+                        vn2003
+                        vn2004
+                        vn2005
+                        vn2006
+                        vn2007
+                        vn2008
+                        vn2009
+                        vn2010
+                        vn3998
+                        vn3999
+                        vn4006
+                    ]
+                }
+            }
+        }
+    }
+    replace: ae2 {
+        description "to.esxi-host-51";
+        esi {
+            00:02:00:00:00:00:06:00:00:06;
+            all-active;
+        }
+        aggregated-ether-options {
+            lacp {
+                active;
+                system-id 02:00:00:00:00:06;
+            }
+        }
+        mtu 9216;
+        unit 0 {
+            family ethernet-switching {
+                interface-mode trunk
+                vlan {
+                    members [
+                        vn850
+                    ]
+                }
+            }
+        }
+    }
+    lo0 {
+        unit 0 {
+            family inet {
+                address 10.11.0.9/32;
+            }
+        }
+        unit 2 {
+            family inet {
+                address 10.11.0.13/32;
+            }
+        }
+        unit 3 {
+            family inet {
+                address 10.11.0.29/32;
+            }
+        }
+        unit 5 {
+            family inet {
+                address 10.11.0.41/32;
+            }
+        }
+        unit 6 {
+            family inet {
+                address 10.11.0.53/32;
+            }
+        }
+        unit 7 {
+            family inet {
+                address 10.11.0.21/32;
+            }
+        }
+        unit 9 {
+            family inet {
+                address 10.11.0.45/32;
+            }
+        }
+        unit 11 {
+            family inet {
+                address 10.11.0.37/32;
+            }
+        }
+        unit 14 {
+            family inet {
+                address 10.11.0.61/32;
+            }
+        }
+        unit 15 {
+            family inet {
+                address 10.11.0.67/32;
+            }
+        }
+    }
+    irb {
+        unit 14 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.1.1.1/24;
+            }
+        }
+        unit 15 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.1.2.1/24;
+            }
+        }
+        unit 300 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.30.30.1/24;
+            }
+        }
+        unit 301 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.30.31.1/24;
+            }
+        }
+        unit 310 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.31.30.1/24;
+            }
+        }
+        unit 311 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.31.31.1/24;
+            }
+        }
+        unit 850 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.85.0.1/16;
+            }
+        }
+        unit 1019 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.19.10.1/24;
+            }
+        }
+        unit 1030 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.130.0.1/16;
+            }
+        }
+        unit 2001 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.201.0.1/16;
+            }
+        }
+        unit 2002 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.202.0.1/16;
+            }
+        }
+        unit 2003 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.203.0.1/16;
+            }
+        }
+        unit 2004 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.204.0.1/16;
+            }
+        }
+        unit 2005 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.205.0.1/16;
+            }
+        }
+        unit 2006 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.206.0.1/16;
+            }
+        }
+        unit 2007 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.207.0.1/16;
+            }
+        }
+        unit 2008 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.208.0.1/16;
+            }
+        }
+        unit 2009 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.209.0.1/16;
+            }
+        }
+        unit 2010 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.210.0.1/16;
+            }
+        }
+        unit 2051 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.251.0.1/24;
+            }
+        }
+        unit 3998 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.39.38.1/24;
+            }
+        }
+        unit 3999 {
+            mac 00:1c:73:00:00:01;
+            family inet {
+                mtu 9000;
+                address 10.39.39.1/24;
+            }
+        }
+    }
+}
+forwarding-options {
+    vxlan-routing {
+        next-hop 32768;
+        interface-num 8192;
+        overlay-ecmp;
+    }
+    evpn-vxlan {
+        shared-tunnels;
+    }
+}
+routing-instances {
+    1BLUE {
+        instance-type vrf;
+        interface irb.310;
+        interface irb.311;
+        interface lo0.2;
+        route-distinguisher 10.11.0.9:12;
+        vrf-target target:310300L:1;
+        routing-options {
+            multipath;
+            auto-export;
+            graceful-restart;
+        }
+        protocols {
+            evpn {
+                ip-prefix-routes {
+                    advertise direct-nexthop;
+                    encapsulation vxlan;
+                    vni 310300;
+                    export BGP-AOS-Policy-1BLUE;
+                }
+                irb-symmetric-routing {
+                    vni 310300;
+                }
+            }
+        }
+    }
+    1RED {
+        instance-type vrf;
+        interface irb.300;
+        interface irb.301;
+        interface lo0.3;
+        route-distinguisher 10.11.0.9:11;
+        vrf-target target:300301L:1;
+        routing-options {
+            multipath;
+            auto-export;
+            graceful-restart;
+        }
+        protocols {
+            evpn {
+                ip-prefix-routes {
+                    advertise direct-nexthop;
+                    encapsulation vxlan;
+                    vni 300301;
+                    export BGP-AOS-Policy-1RED;
+                }
+                irb-symmetric-routing {
+                    vni 300301;
+                }
+            }
+        }
+    }
+    APP2 {
+        instance-type vrf;
+        interface irb.2001;
+        interface irb.2002;
+        interface irb.2003;
+        interface irb.2004;
+        interface irb.2005;
+        interface lo0.5;
+        route-distinguisher 10.11.0.9:5;
+        vrf-target target:100032L:1;
+        routing-options {
+            multipath;
+            auto-export;
+            graceful-restart;
+        }
+        protocols {
+            evpn {
+                ip-prefix-routes {
+                    advertise direct-nexthop;
+                    encapsulation vxlan;
+                    vni 100032;
+                    export BGP-AOS-Policy-APP2;
+                }
+                irb-symmetric-routing {
+                    vni 100032;
+                }
+            }
+        }
+    }
+    DB {
+        instance-type vrf;
+        interface irb.2006;
+        interface irb.2007;
+        interface irb.2008;
+        interface irb.2009;
+        interface irb.2010;
+        interface lo0.6;
+        route-distinguisher 10.11.0.9:3;
+        vrf-target target:100033L:1;
+        routing-options {
+            multipath;
+            auto-export;
+            graceful-restart;
+        }
+        protocols {
+            evpn {
+                ip-prefix-routes {
+                    advertise direct-nexthop;
+                    encapsulation vxlan;
+                    vni 100033;
+                    export BGP-AOS-Policy-DB;
+                }
+                irb-symmetric-routing {
+                    vni 100033;
+                }
+            }
+        }
+    }
+    ESXi {
+        instance-type vrf;
+        interface irb.850;
+        interface irb.2051;
+        interface lo0.7;
+        route-distinguisher 10.11.0.9:9;
+        vrf-target target:100034L:1;
+        routing-options {
+            multipath;
+            auto-export;
+            graceful-restart;
+        }
+        protocols {
+            evpn {
+                ip-prefix-routes {
+                    advertise direct-nexthop;
+                    encapsulation vxlan;
+                    vni 100034;
+                    export BGP-AOS-Policy-ESXi;
+                }
+                irb-symmetric-routing {
+                    vni 100034;
+                }
+            }
+        }
+    }
+    Flow {
+        instance-type vrf;
+        interface irb.1019;
+        interface lo0.14;
+        interface xe-0/0/3.31;
+        route-distinguisher 10.11.0.9:13;
+        vrf-target target:100041L:1;
+        routing-options {
+            multipath;
+            auto-export;
+            graceful-restart;
+        }
+        protocols {
+            bgp {
+                group l3rtr {
+                    type external;
+                    multipath {
+                        multiple-as;
+                    }
+                    multihop {
+                        ttl 1;
+                    }
+                    family inet {
+                        unicast {
+                            loops 2;
+                        }
+                    }
+                    neighbor 10.251.31.1 {
+                        description "facing_ex4550-191";
+                        local-address 10.251.31.0;
+                        peer-as 4291111112;
+                        multihop {
+                            ttl 2;
+                        }
+                        family inet {
+                            unicast;
+                        }
+                        import ( RoutesFromExt-Flow-Flow-VRF-Policy );
+                        export ( RoutesToExt-Flow-Flow-VRF-Policy );
+                    }
+                }
+                graceful-restart {
+                    dont-help-shared-fate-bfd-down;
+                }
+            }
+            evpn {
+                ip-prefix-routes {
+                    advertise direct-nexthop;
+                    encapsulation vxlan;
+                    vni 100041;
+                    export BGP-AOS-Policy-Flow;
+                }
+            }
+        }
+    }
+    L2-DCI {
+        instance-type vrf;
+        interface irb.3998;
+        interface irb.3999;
+        interface lo0.9;
+        route-distinguisher 10.11.0.9:2;
+        vrf-target target:139786L:1;
+        routing-options {
+            multipath;
+            auto-export;
+            graceful-restart;
+        }
+        protocols {
+            evpn {
+                ip-prefix-routes {
+                    advertise direct-nexthop;
+                    encapsulation vxlan;
+                    vni 139786;
+                    export BGP-AOS-Policy-L2-DCI;
+                }
+                irb-symmetric-routing {
+                    vni 139786;
+                }
+            }
+        }
+    }
+    P1-P2-Stretch {
+        instance-type vrf;
+        interface irb.1030;
+        interface lo0.11;
+        route-distinguisher 10.11.0.9:7;
+        vrf-target target:100036L:1;
+        routing-options {
+            multipath;
+            auto-export;
+            graceful-restart;
+        }
+        protocols {
+            evpn {
+                ip-prefix-routes {
+                    advertise direct-nexthop;
+                    encapsulation vxlan;
+                    vni 100036;
+                    export BGP-AOS-Policy-P1-P2-Stretch;
+                }
+                irb-symmetric-routing {
+                    vni 100036;
+                }
+            }
+        }
+    }
+    Test {
+        instance-type vrf;
+        interface irb.14;
+        interface irb.15;
+        interface lo0.15;
+        route-distinguisher 10.11.0.9:18;
+        vrf-target target:100021L:1;
+        routing-options {
+            multipath;
+            auto-export;
+            graceful-restart;
+        }
+        protocols {
+            evpn {
+                ip-prefix-routes {
+                    advertise direct-nexthop;
+                    encapsulation vxlan;
+                    vni 100021;
+                    export BGP-AOS-Policy-Test;
+                }
+            }
+        }
+    }
+    evpn-1 {
+        instance-type mac-vrf;
+        protocols {
+            evpn {
+                vni-options {
+                    vni 100007 {
+                        vrf-target target:100007L:1;
+                    }
+                    vni 100008 {
+                        vrf-target target:100008L:1;
+                    }
+                    vni 100009 {
+                        vrf-target target:100009L:1;
+                    }
+                    vni 100010 {
+                        vrf-target target:100010L:1;
+                    }
+                    vni 100011 {
+                        vrf-target target:100011L:1;
+                    }
+                    vni 100012 {
+                        vrf-target target:100012L:1;
+                    }
+                    vni 100013 {
+                        vrf-target target:100013L:1;
+                    }
+                    vni 100014 {
+                        vrf-target target:100014L:1;
+                    }
+                    vni 100015 {
+                        vrf-target target:100015L:1;
+                    }
+                    vni 100016 {
+                        vrf-target target:100016L:1;
+                    }
+                    vni 100017 {
+                        vrf-target target:100017L:1;
+                    }
+                    vni 100020 {
+                        vrf-target target:100020L:1;
+                    }
+                    vni 100023 {
+                        vrf-target target:100023L:1;
+                    }
+                    vni 100042 {
+                        vrf-target target:100042L:1;
+                    }
+                    vni 100044 {
+                        vrf-target target:100044L:1;
+                    }
+                    vni 100045 {
+                        vrf-target target:100045L:1;
+                    }
+                    vni 100046 {
+                        vrf-target target:100046L:1;
+                    }
+                    vni 190190 {
+                        vrf-target target:190190L:1;
+                    }
+                    vni 300300 {
+                        vrf-target target:300300L:1;
+                    }
+                    vni 301301 {
+                        vrf-target target:301301L:1;
+                    }
+                    vni 310310 {
+                        vrf-target target:310310L:1;
+                    }
+                    vni 311311 {
+                        vrf-target target:311311L:1;
+                    }
+                    vni 383838 {
+                        vrf-target target:383838L:1;
+                    }
+                    vni 393939 {
+                        vrf-target target:393939L:1;
+                    }
+                }
+                encapsulation vxlan;
+                default-gateway do-not-advertise;
+                duplicate-mac-detection {
+                    auto-recovery-time 9;
+                }
+                extended-vni-list all;
+            }
+        }
+        vtep-source-interface lo0.0;
+        service-type vlan-aware;
+        route-distinguisher 10.11.0.9:65534;
+        vrf-target target:100:100;
+        interface ae1;
+        interface ae2;
+        vlans {
+            vn14 {
+                vlan-id 14;
+                description "Test-3200-1";
+                vxlan {
+                    vni 100044;
+                }
+                l3-interface irb.14;
+            }
+            vn15 {
+                vlan-id 15;
+                description "Vn-Claire";
+                vxlan {
+                    vni 100045;
+                }
+                l3-interface irb.15;
+            }
+            vn17 {
+                vlan-id 17;
+                description "VLAN-900-DCI";
+                vxlan {
+                    vni 190190;
+                }
+            }
+            vn300 {
+                vlan-id 300;
+                description "1RED-VLAN300";
+                vxlan {
+                    vni 300300;
+                }
+                l3-interface irb.300;
+            }
+            vn301 {
+                vlan-id 301;
+                description "1RED-VLAN301";
+                vxlan {
+                    vni 301301;
+                }
+                l3-interface irb.301;
+            }
+            vn310 {
+                vlan-id 310;
+                description "1BLUE-VLAN310";
+                vxlan {
+                    vni 310310;
+                }
+                l3-interface irb.310;
+            }
+            vn311 {
+                vlan-id 311;
+                description "1BLUE-VLAN311";
+                vxlan {
+                    vni 311311;
+                }
+                l3-interface irb.311;
+            }
+            vn850 {
+                vlan-id 850;
+                description "vn850";
+                vxlan {
+                    vni 100046;
+                }
+                l3-interface irb.850;
+            }
+            vn1019 {
+                vlan-id 1019;
+                description "Flow";
+                vxlan {
+                    vni 100042;
+                }
+                l3-interface irb.1019;
+            }
+            vn1030 {
+                vlan-id 1030;
+                description "P1-P2-Stretch-VLAN1030";
+                vxlan {
+                    vni 100023;
+                }
+                l3-interface irb.1030;
+            }
+            vn2001 {
+                vlan-id 2001;
+                description "APP2-VLAN2001";
+                vxlan {
+                    vni 100007;
+                }
+                l3-interface irb.2001;
+            }
+            vn2002 {
+                vlan-id 2002;
+                description "APP2-VLAN2002";
+                vxlan {
+                    vni 100008;
+                }
+                l3-interface irb.2002;
+            }
+            vn2003 {
+                vlan-id 2003;
+                description "APP2-VLAN2003";
+                vxlan {
+                    vni 100009;
+                }
+                l3-interface irb.2003;
+            }
+            vn2004 {
+                vlan-id 2004;
+                description "APP2-VLAN2004";
+                vxlan {
+                    vni 100010;
+                }
+                l3-interface irb.2004;
+            }
+            vn2005 {
+                vlan-id 2005;
+                description "APP2-VLAN2005";
+                vxlan {
+                    vni 100011;
+                }
+                l3-interface irb.2005;
+            }
+            vn2006 {
+                vlan-id 2006;
+                description "DB-VLAN-2006";
+                vxlan {
+                    vni 100013;
+                }
+                l3-interface irb.2006;
+            }
+            vn2007 {
+                vlan-id 2007;
+                description "DB-VLAN2007";
+                vxlan {
+                    vni 100014;
+                }
+                l3-interface irb.2007;
+            }
+            vn2008 {
+                vlan-id 2008;
+                description "DB-VLAN2008";
+                vxlan {
+                    vni 100015;
+                }
+                l3-interface irb.2008;
+            }
+            vn2009 {
+                vlan-id 2009;
+                description "DB-VLAN2009";
+                vxlan {
+                    vni 100016;
+                }
+                l3-interface irb.2009;
+            }
+            vn2010 {
+                vlan-id 2010;
+                description "DB-VLAN2010";
+                vxlan {
+                    vni 100017;
+                }
+                l3-interface irb.2010;
+            }
+            vn2051 {
+                vlan-id 2051;
+                description "ESXi-BL-VLAN2501";
+                vxlan {
+                    vni 100012;
+                }
+                l3-interface irb.2051;
+            }
+            vn3998 {
+                vlan-id 3998;
+                description "L2-DCI-VLAN3998";
+                vxlan {
+                    vni 383838;
+                }
+                l3-interface irb.3998;
+            }
+            vn3999 {
+                vlan-id 3999;
+                description "L2-Stretch-VLAN3999";
+                vxlan {
+                    vni 393939;
+                }
+                l3-interface irb.3999;
+            }
+            vn4006 {
+                vlan-id 4006;
+                description "L2-BO-DB";
+                vxlan {
+                    vni 100020;
+                }
+            }
+        }
+    }
+}
+routing-options {
+    router-id 10.11.0.9;
+    autonomous-system 4200000106;
+    graceful-restart;
+    forwarding-table {
+        export PFE-LB;
+        ecmp-fast-reroute;
+        chained-composite-next-hop {
+            ingress {
+                evpn;
+            }
+        }
+    }
+}
+protocols {
+    bgp {
+        log-updown;
+        graceful-restart {
+            dont-help-shared-fate-bfd-down;
+        }
+        multipath;
+        group l3clos-l {
+            type external;
+            multipath {
+                multiple-as;
+            }
+            bfd-liveness-detection {
+                minimum-interval 1000;
+                multiplier 3;
+            }
+            vpn-apply-export;
+            neighbor 10.1.0.28 {
+                description "facing_compute-spine-ptx-01";
+                local-address 10.1.0.29;
+                peer-as 4200000102;
+                family inet {
+                    unicast;
+                }
+                export ( LEAF_TO_SPINE_FABRIC_OUT && BGP-AOS-Policy );
+            }
+            neighbor 10.1.0.32 {
+                description "facing_compute-spine-ptx-02";
+                local-address 10.1.0.33;
+                peer-as 4200000102;
+                family inet {
+                    unicast;
+                }
+                export ( LEAF_TO_SPINE_FABRIC_OUT && BGP-AOS-Policy );
+            }
+        }
+        group l3clos-l-evpn {
+            type external;
+            multipath {
+                multiple-as;
+            }
+            multihop {
+                no-nexthop-change;
+                ttl 1;
+            }
+            family evpn {
+                signaling {
+                    loops 2;
+                }
+            }
+            bfd-liveness-detection {
+                minimum-interval 3000;
+                multiplier 3;
+            }
+            vpn-apply-export;
+            neighbor 10.11.0.4 {
+                description "facing_compute-spine-ptx-01-evpn-overlay";
+                local-address 10.11.0.9;
+                peer-as 4200000102;
+                family evpn {
+                    signaling;
+                }
+                import ( EVPN_IMPORT );
+                export ( LEAF_TO_SPINE_EVPN_OUT && EVPN_EXPORT );
+            }
+            neighbor 10.11.0.5 {
+                description "facing_compute-spine-ptx-02-evpn-overlay";
+                local-address 10.11.0.9;
+                peer-as 4200000102;
+                family evpn {
+                    signaling;
+                }
+                import ( EVPN_IMPORT );
+                export ( LEAF_TO_SPINE_EVPN_OUT && EVPN_EXPORT );
+            }
+        }
+        group l3rtr {
+            type external;
+            multipath {
+                multiple-as;
+            }
+            multihop {
+                ttl 1;
+            }
+            family inet {
+                unicast {
+                    loops 2;
+                }
+            }
+            vpn-apply-export;
+            neighbor 10.251.30.9 {
+                description "facing_ex4550-191";
+                local-address 10.251.30.8;
+                peer-as 4291111112;
+                multihop {
+                    ttl 2;
+                }
+                hold-time 30;
+                family inet {
+                    unicast;
+                }
+                import ( RoutesFromExt-default-Default-VRF-Policy );
+                export ( RoutesToExt-default-Default-VRF-Policy );
+            }
+        }
+    }
+    lldp {
+        port-id-subtype interface-name;
+        port-description-type interface-description;
+        neighbour-port-info-display port-id;
+        interface all;
+    }
+    replace: rstp {
+        bridge-priority 0;
+        interface ae1 {
+            edge;
+        }
+        interface ae2 {
+            edge;
+        }
+        bpdu-block-on-edge;
+    }
+    l2-learning {
+        telemetry {
+            enable-remote-entries;
+        }
+    }
+}
+policy-options {
+    community 1BLUE_COMMUNITY_V4 {
+        members [ 10:20007 21002:26000 ];
+    }
+    community 1RED_COMMUNITY_V4 {
+        members [ 10:20007 21003:26000 ];
+    }
+    community APP2_COMMUNITY_V4 {
+        members [ 10:20007 21005:26000 ];
+    }
+    community DB_COMMUNITY_V4 {
+        members [ 10:20007 21006:26000 ];
+    }
+    community DEFAULT_DIRECT_V4 {
+        members [ 10:20007 21001:26000 ];
+    }
+    community ESXI_COMMUNITY_V4 {
+        members [ 10:20007 21007:26000 ];
+    }
+    community FABRIC_COMMUNITIES {
+        members [ 0:12 0:13 0:14 0:15 .+:200.. 2....:260.. ];
+    }
+    community FLOW_COMMUNITY_V4 {
+        members [ 10:20007 21014:26000 ];
+    }
+    community FROM_SPINE_EVPN_TIER {
+        members [ 0:14 ];
+    }
+    community FROM_SPINE_FABRIC_TIER {
+        members [ 0:15 ];
+    }
+    community L2-DCI_COMMUNITY_V4 {
+        members [ 10:20007 21009:26000 ];
+    }
+    community P1-P2-STRETCH_COMMUNITY_V4 {
+        members [ 10:20007 21011:26000 ];
+    }
+    community RoutesFromExt-Flow-Flow-VRF-Policy {
+        members [ 10:20009 21014:26000 ];
+    }
+    community RoutesFromExt-default-Default-VRF-Policy {
+        members [ 10:20009 21001:26000 ];
+    }
+    community TEST_COMMUNITY_V4 {
+        members [ 10:20007 21015:26000 ];
+    }
+    community VRF_APP2 {
+        members [ target:100032L:1 ];
+    }
+    community VRF_APP2_EXPORT {
+        members [ target:999999L:2 ];
+    }
+    community VRF_APP2_RT_999999_100_IMPORT {
+        members [ target:999999L:100 ];
+    }
+    route-filter-list RoutesFromExt-Flow-Flow-VRF-Policy {
+        10.11.0.0/16 upto /32;
+        0.0.0.0/0 exact;
+    }
+    route-filter-list RoutesFromExt-default-Default-VRF-Policy {
+        0.0.0.0/0 upto /32;
+    }
+    route-filter-list RoutesToExt-Flow-Flow-VRF-Policy {
+        10.19.10.10/32 exact;
+        10.19.10.0/24 upto /32;
+        10.251.30.0/29 upto /32;
+    }
+    route-filter-list RoutesToExt-default-Default-VRF-Policy {
+        10.11.0.0/29 upto /32;
+        10.11.0.8/30 upto /32;
+        10.11.0.12/32 exact;
+    }
+    policy-statement AllPodNetworks {
+        term AllPodNetworks-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add DEFAULT_DIRECT_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-100 {
+            then reject;
+        }
+    }
+    policy-statement AllPodNetworks-1BLUE {
+        term AllPodNetworks-1BLUE-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add 1BLUE_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-1BLUE-100 {
+            then reject;
+        }
+    }
+    policy-statement AllPodNetworks-1RED {
+        term AllPodNetworks-1RED-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add 1RED_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-1RED-100 {
+            then reject;
+        }
+    }
+    policy-statement AllPodNetworks-APP2 {
+        term AllPodNetworks-APP2-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add APP2_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-APP2-100 {
+            then reject;
+        }
+    }
+    policy-statement AllPodNetworks-DB {
+        term AllPodNetworks-DB-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add DB_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-DB-100 {
+            then reject;
+        }
+    }
+    policy-statement AllPodNetworks-ESXi {
+        term AllPodNetworks-ESXi-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add ESXI_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-ESXi-100 {
+            then reject;
+        }
+    }
+    policy-statement AllPodNetworks-Flow {
+        term AllPodNetworks-Flow-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add FLOW_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-Flow-100 {
+            then reject;
+        }
+    }
+    policy-statement AllPodNetworks-L2-DCI {
+        term AllPodNetworks-L2-DCI-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add L2-DCI_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-L2-DCI-100 {
+            then reject;
+        }
+    }
+    policy-statement AllPodNetworks-P1-P2-Stretch {
+        term AllPodNetworks-P1-P2-Stretch-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add P1-P2-STRETCH_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-P1-P2-Stretch-100 {
+            then reject;
+        }
+    }
+    policy-statement AllPodNetworks-Test {
+        term AllPodNetworks-Test-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add TEST_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-Test-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy {
+        term BGP-AOS-Policy-10 {
+            from {
+                policy AllPodNetworks;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-50 {
+            from {
+                protocol evpn;
+                route-filter 0.0.0.0/0 prefix-length-range /32-/32;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy-1BLUE {
+        term BGP-AOS-Policy-1BLUE-10 {
+            from {
+                policy AllPodNetworks-1BLUE;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-1BLUE-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-1BLUE-50 {
+            from {
+                protocol evpn;
+                route-filter 0.0.0.0/0 prefix-length-range /32-/32;
+            }
+            then {
+                community add 1BLUE_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term BGP-AOS-Policy-1BLUE-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy-1RED {
+        term BGP-AOS-Policy-1RED-10 {
+            from {
+                policy AllPodNetworks-1RED;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-1RED-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-1RED-50 {
+            from {
+                protocol evpn;
+                route-filter 0.0.0.0/0 prefix-length-range /32-/32;
+            }
+            then {
+                community add 1RED_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term BGP-AOS-Policy-1RED-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy-APP2 {
+        term BGP-AOS-Policy-APP2-10 {
+            from {
+                policy AllPodNetworks-APP2;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-APP2-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-APP2-50 {
+            from {
+                protocol evpn;
+                route-filter 0.0.0.0/0 prefix-length-range /32-/32;
+            }
+            then {
+                community add APP2_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term BGP-AOS-Policy-APP2-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy-DB {
+        term BGP-AOS-Policy-DB-10 {
+            from {
+                policy AllPodNetworks-DB;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-DB-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-DB-50 {
+            from {
+                protocol evpn;
+                route-filter 0.0.0.0/0 prefix-length-range /32-/32;
+            }
+            then {
+                community add DB_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term BGP-AOS-Policy-DB-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy-ESXi {
+        term BGP-AOS-Policy-ESXi-10 {
+            from {
+                policy AllPodNetworks-ESXi;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-ESXi-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-ESXi-50 {
+            from {
+                protocol evpn;
+                route-filter 0.0.0.0/0 prefix-length-range /32-/32;
+            }
+            then {
+                community add ESXI_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term BGP-AOS-Policy-ESXi-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy-Flow {
+        term BGP-AOS-Policy-Flow-10 {
+            from {
+                policy AllPodNetworks-Flow;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-Flow-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-Flow-50 {
+            from {
+                protocol evpn;
+                route-filter 0.0.0.0/0 prefix-length-range /32-/32;
+            }
+            then {
+                community add FLOW_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term BGP-AOS-Policy-Flow-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy-L2-DCI {
+        term BGP-AOS-Policy-L2-DCI-10 {
+            from {
+                policy AllPodNetworks-L2-DCI;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-L2-DCI-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-L2-DCI-50 {
+            from {
+                protocol evpn;
+                route-filter 0.0.0.0/0 prefix-length-range /32-/32;
+            }
+            then {
+                community add L2-DCI_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term BGP-AOS-Policy-L2-DCI-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy-P1-P2-Stretch {
+        term BGP-AOS-Policy-P1-P2-Stretch-10 {
+            from {
+                policy AllPodNetworks-P1-P2-Stretch;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-P1-P2-Stretch-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-P1-P2-Stretch-50 {
+            from {
+                protocol evpn;
+                route-filter 0.0.0.0/0 prefix-length-range /32-/32;
+            }
+            then {
+                community add P1-P2-STRETCH_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term BGP-AOS-Policy-P1-P2-Stretch-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy-Test {
+        term BGP-AOS-Policy-Test-10 {
+            from {
+                policy AllPodNetworks-Test;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-Test-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-Test-50 {
+            from {
+                protocol evpn;
+                route-filter 0.0.0.0/0 prefix-length-range /32-/32;
+            }
+            then {
+                community add TEST_COMMUNITY_V4;
+                accept;
+            }
+        }
+        term BGP-AOS-Policy-Test-100 {
+            then reject;
+        }
+    }
+    policy-statement EVPN_EXPORT {
+        term EVPN_EXPORT-5 {
+            from {
+                community VRF_APP2;
+            }
+            then {
+                community add VRF_APP2_EXPORT;
+                next term;
+            }
+        }
+        term EVPN_EXPORT-4095 {
+            then accept;
+        }
+    }
+    policy-statement EVPN_IMPORT {
+        term EVPN_IMPORT-5 {
+            from {
+                community [ VRF_APP2_RT_999999_100_IMPORT ];
+            }
+            then {
+                community add VRF_APP2;
+                next term;
+            }
+        }
+        term EVPN_IMPORT-4095 {
+            then accept;
+        }
+    }
+    policy-statement LEAF_TO_SPINE_EVPN_OUT {
+        term LEAF_TO_SPINE_EVPN_OUT-10 {
+            from {
+                community FROM_SPINE_EVPN_TIER;
+                protocol bgp;
+            }
+            then reject;
+        }
+        term LEAF_TO_SPINE_EVPN_OUT-20 {
+            then accept;
+        }
+    }
+    policy-statement LEAF_TO_SPINE_FABRIC_OUT {
+        term LEAF_TO_SPINE_FABRIC_OUT-10 {
+            from {
+                community FROM_SPINE_FABRIC_TIER;
+                protocol bgp;
+            }
+            then reject;
+        }
+        term LEAF_TO_SPINE_FABRIC_OUT-20 {
+            then accept;
+        }
+    }
+    policy-statement RoutesFromExt-Flow-Flow-VRF-Policy {
+        term RoutesFromExt-Flow-Flow-VRF-Policy-10 {
+            from {
+                route-filter-list RoutesFromExt-Flow-Flow-VRF-Policy;
+                family inet;
+            }
+            then {
+                community add RoutesFromExt-Flow-Flow-VRF-Policy;
+                accept;
+            }
+        }
+        term RoutesFromExt-Flow-Flow-VRF-Policy-30 {
+            from {
+                family inet;
+            }
+            then reject;
+        }
+    }
+    policy-statement RoutesFromExt-default-Default-VRF-Policy {
+        term RoutesFromExt-default-Default-VRF-Policy-10 {
+            from {
+                route-filter-list RoutesFromExt-default-Default-VRF-Policy;
+                family inet;
+            }
+            then {
+                community add RoutesFromExt-default-Default-VRF-Policy;
+                accept;
+            }
+        }
+        term RoutesFromExt-default-Default-VRF-Policy-30 {
+            from {
+                family inet;
+            }
+            then reject;
+        }
+    }
+    policy-statement RoutesToExt-Flow-Flow-VRF-Policy {
+        term RoutesToExt-Flow-Flow-VRF-Policy-10 {
+            from {
+                route-filter-list RoutesToExt-Flow-Flow-VRF-Policy;
+                family inet;
+            }
+            then {
+                community delete FABRIC_COMMUNITIES;
+                next-hop self;
+                accept;
+            }
+        }
+        term RoutesToExt-Flow-Flow-VRF-Policy-30 {
+            from {
+                family inet;
+            }
+            then reject;
+        }
+    }
+    policy-statement RoutesToExt-default-Default-VRF-Policy {
+        term RoutesToExt-default-Default-VRF-Policy-10 {
+            from {
+                route-filter-list RoutesToExt-default-Default-VRF-Policy;
+                family inet;
+            }
+            then {
+                community delete FABRIC_COMMUNITIES;
+                next-hop self;
+                accept;
+            }
+        }
+        term RoutesToExt-default-Default-VRF-Policy-30 {
+            from {
+                family inet;
+            }
+            then reject;
+        }
+    }
+    policy-statement PFE-LB {
+        then {
+            load-balance per-packet;
+        }
+    }
+}

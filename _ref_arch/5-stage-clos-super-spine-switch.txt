@@ -1,0 +1,366 @@
+system {
+    host-name superspine-qfx5700-01;
+    commit synchronize;
+}
+chassis {
+    redundancy {
+        routing-engine 0 master;
+        routing-engine 1 backup;
+        failover {
+            on-loss-of-keepalives;
+            on-disk-failure;
+        }
+        graceful-switchover;
+    }
+}
+interfaces {
+    replace: et-0/0/0 {
+        description "facing_compute-spine-ptx-01:et-0/0/0";
+        speed 40g;
+        mtu 9216;
+        unit 0 {
+            family inet {
+                mtu 9170;
+                address 10.1.0.9/31;
+            }
+        }
+    }
+    replace: et-0/0/1 {
+        description "facing_compute-spine-ptx-02:et-0/0/0";
+        speed 40g;
+        mtu 9216;
+        unit 0 {
+            family inet {
+                mtu 9170;
+                address 10.1.0.13/31;
+            }
+        }
+    }
+    replace: et-0/0/2 {
+        description "facing_storage-spine-ptx-01:et-0/0/0";
+        speed 40g;
+        mtu 9216;
+        unit 0 {
+            family inet {
+                mtu 9170;
+                address 10.1.0.1/31;
+            }
+        }
+    }
+    replace: et-0/0/3 {
+        description "facing_storage-spine-ptx-02:et-0/0/0";
+        speed 40g;
+        mtu 9216;
+        unit 0 {
+            family inet {
+                mtu 9170;
+                address 10.1.0.5/31;
+            }
+        }
+    }
+    replace: et-0/0/4 {
+        description "facing_service-pod-spine-01:et-0/0/6";
+        speed 40g;
+        mtu 9216;
+        unit 0 {
+            family inet {
+                mtu 9170;
+                address 10.1.0.17/31;
+            }
+        }
+    }
+    replace: et-0/0/5 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/6 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/7 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/8 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/9 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/10 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/11 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/12 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/13 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/14 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-0/0/15 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-2/0/0 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-2/0/1 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-2/0/2 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: et-2/0/3 {
+        unit 0 {
+           family inet;
+        }
+    }
+    lo0 {
+        unit 0 {
+            family inet {
+                address 10.11.0.0/32;
+            }
+        }
+    }
+}
+routing-options {
+    router-id 10.11.0.0;
+    autonomous-system 4200000100;
+    graceful-restart;
+    forwarding-table {
+        export PFE-LB;
+        ecmp-fast-reroute;
+    }
+}
+protocols {
+    bgp {
+        log-updown;
+        graceful-restart {
+            dont-help-shared-fate-bfd-down;
+        }
+        multipath;
+        group l3clos-s {
+            type external;
+            multipath {
+                multiple-as;
+            }
+            bfd-liveness-detection {
+                minimum-interval 1000;
+                multiplier 3;
+            }
+            vpn-apply-export;
+            neighbor 10.1.0.8 {
+                description "facing_compute-spine-ptx-01";
+                local-address 10.1.0.9;
+                peer-as 4200000102;
+                family inet {
+                    unicast;
+                }
+                export ( SUPERSPINE_TO_SPINE_FABRIC_OUT && BGP-AOS-Policy );
+            }
+            neighbor 10.1.0.12 {
+                description "facing_compute-spine-ptx-02";
+                local-address 10.1.0.13;
+                peer-as 4200000102;
+                family inet {
+                    unicast;
+                }
+                export ( SUPERSPINE_TO_SPINE_FABRIC_OUT && BGP-AOS-Policy );
+            }
+            neighbor 10.1.0.16 {
+                description "facing_service-pod-spine-01";
+                local-address 10.1.0.17;
+                peer-as 4200000103;
+                family inet {
+                    unicast;
+                }
+                export ( SUPERSPINE_TO_SPINE_FABRIC_OUT && BGP-AOS-Policy );
+            }
+            neighbor 10.1.0.0 {
+                description "facing_storage-spine-ptx-01";
+                local-address 10.1.0.1;
+                peer-as 4200000101;
+                family inet {
+                    unicast;
+                }
+                export ( SUPERSPINE_TO_SPINE_FABRIC_OUT && BGP-AOS-Policy );
+            }
+            neighbor 10.1.0.4 {
+                description "facing_storage-spine-ptx-02";
+                local-address 10.1.0.5;
+                peer-as 4200000101;
+                family inet {
+                    unicast;
+                }
+                export ( SUPERSPINE_TO_SPINE_FABRIC_OUT && BGP-AOS-Policy );
+            }
+        }
+        group l3clos-s-evpn {
+            type external;
+            multipath {
+                multiple-as;
+            }
+            multihop {
+                no-nexthop-change;
+                ttl 1;
+            }
+            family evpn {
+                signaling {
+                    loops 2;
+                }
+            }
+            bfd-liveness-detection {
+                minimum-interval 3000;
+                multiplier 3;
+            }
+            vpn-apply-export;
+            neighbor 10.11.0.4 {
+                description "facing_compute-spine-ptx-01-evpn-overlay";
+                local-address 10.11.0.0;
+                peer-as 4200000102;
+                family evpn {
+                    signaling;
+                }
+                export ( SUPERSPINE_TO_SPINE_EVPN_OUT );
+            }
+            neighbor 10.11.0.5 {
+                description "facing_compute-spine-ptx-02-evpn-overlay";
+                local-address 10.11.0.0;
+                peer-as 4200000102;
+                family evpn {
+                    signaling;
+                }
+                export ( SUPERSPINE_TO_SPINE_EVPN_OUT );
+            }
+            neighbor 10.11.0.6 {
+                description "facing_service-pod-spine-01-evpn-overlay";
+                local-address 10.11.0.0;
+                peer-as 4200000103;
+                family evpn {
+                    signaling;
+                }
+                export ( SUPERSPINE_TO_SPINE_EVPN_OUT );
+            }
+            neighbor 10.11.0.2 {
+                description "facing_storage-spine-ptx-01-evpn-overlay";
+                local-address 10.11.0.0;
+                peer-as 4200000101;
+                family evpn {
+                    signaling;
+                }
+                export ( SUPERSPINE_TO_SPINE_EVPN_OUT );
+            }
+            neighbor 10.11.0.3 {
+                description "facing_storage-spine-ptx-02-evpn-overlay";
+                local-address 10.11.0.0;
+                peer-as 4200000101;
+                family evpn {
+                    signaling;
+                }
+                export ( SUPERSPINE_TO_SPINE_EVPN_OUT );
+            }
+        }
+    }
+    lldp {
+        port-id-subtype interface-name;
+        port-description-type interface-description;
+        neighbour-port-info-display port-id;
+        interface all;
+    }
+    replace: rstp {
+        disable;
+    }
+}
+policy-options {
+    community DEFAULT_DIRECT_V4 {
+        members [ 1:20007 21001:26000 ];
+    }
+    community FROM_SUPERSPINE_EVPN_TIER {
+        members [ 0:12 ];
+    }
+    community FROM_SUPERSPINE_FABRIC_TIER {
+        members [ 0:13 ];
+    }
+    policy-statement AllPodNetworks {
+        term AllPodNetworks-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add DEFAULT_DIRECT_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy {
+        term BGP-AOS-Policy-10 {
+            from {
+                policy AllPodNetworks;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-100 {
+            then reject;
+        }
+    }
+    policy-statement SUPERSPINE_TO_SPINE_EVPN_OUT {
+        term SUPERSPINE_TO_SPINE_EVPN_OUT-10 {
+            then {
+                community add FROM_SUPERSPINE_EVPN_TIER;
+                accept;
+            }
+        }
+    }
+    policy-statement SUPERSPINE_TO_SPINE_FABRIC_OUT {
+        term SUPERSPINE_TO_SPINE_FABRIC_OUT-10 {
+            then {
+                community add FROM_SUPERSPINE_FABRIC_TIER;
+                accept;
+            }
+        }
+    }
+    policy-statement PFE-LB {
+        then {
+            load-balance per-packet;
+        }
+    }
+}

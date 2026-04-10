@@ -1,0 +1,303 @@
+system {
+    host-name Spine1;
+}
+interfaces {
+    replace: ge-0/0/0 {
+        description "facing_leaf1:ge-0/0/0";
+        mtu 9192;
+        unit 0 {
+            family inet {
+                mtu 9170;
+                address 192.168.0.0/31;
+            }
+        }
+    }
+    replace: ge-0/0/1 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/0/2 {
+        description "facing_leaf3:ge-0/0/0";
+        mtu 9192;
+        unit 0 {
+            family inet {
+                mtu 9170;
+                address 192.168.0.4/31;
+            }
+        }
+    }
+    replace: ge-0/0/3 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/0/4 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/0/5 {
+        description "facing_leaf2:ge-0/0/0";
+        mtu 9192;
+        unit 0 {
+            family inet {
+                mtu 9170;
+                address 192.168.0.2/31;
+            }
+        }
+    }
+    replace: ge-0/0/6 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/0/7 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/0/8 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/0/9 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/1/0 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/1/1 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/1/2 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/1/3 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/1/4 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/1/5 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/1/6 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/1/7 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/1/8 {
+        unit 0 {
+           family inet;
+        }
+    }
+    replace: ge-0/1/9 {
+        unit 0 {
+           family inet;
+        }
+    }
+    lo0 {
+        unit 0 {
+            family inet {
+                address 172.16.0.9/32;
+            }
+        }
+    }
+}
+routing-options {
+    router-id 172.16.0.9;
+    autonomous-system 64512;
+    graceful-restart;
+    forwarding-table {
+        export PFE-LB;
+        ecmp-fast-reroute;
+    }
+}
+protocols {
+    bgp {
+        log-updown;
+        graceful-restart {
+            dont-help-shared-fate-bfd-down;
+        }
+        multipath;
+        group l3clos-s {
+            type external;
+            multipath {
+                multiple-as;
+            }
+            bfd-liveness-detection {
+                minimum-interval 1000;
+                multiplier 3;
+            }
+            vpn-apply-export;
+            neighbor 192.168.0.1 {
+                description "facing_leaf1";
+                local-address 192.168.0.0;
+                peer-as 64514;
+                family inet {
+                    unicast;
+                }
+                export ( SPINE_TO_LEAF_FABRIC_OUT && BGP-AOS-Policy );
+            }
+            neighbor 192.168.0.3 {
+                description "facing_leaf2";
+                local-address 192.168.0.2;
+                peer-as 64515;
+                family inet {
+                    unicast;
+                }
+                export ( SPINE_TO_LEAF_FABRIC_OUT && BGP-AOS-Policy );
+            }
+            neighbor 192.168.0.5 {
+                description "facing_leaf3";
+                local-address 192.168.0.4;
+                peer-as 64516;
+                family inet {
+                    unicast;
+                }
+                export ( SPINE_TO_LEAF_FABRIC_OUT && BGP-AOS-Policy );
+            }
+        }
+        group l3clos-s-evpn {
+            type external;
+            multipath {
+                multiple-as;
+            }
+            multihop {
+                no-nexthop-change;
+                ttl 1;
+            }
+            family evpn {
+                signaling {
+                    loops 2;
+                }
+            }
+            bfd-liveness-detection {
+                minimum-interval 3000;
+                multiplier 3;
+            }
+            vpn-apply-export;
+            neighbor 172.16.0.0 {
+                description "facing_leaf1-evpn-overlay";
+                local-address 172.16.0.9;
+                peer-as 64514;
+                family evpn {
+                    signaling;
+                }
+                export ( SPINE_TO_LEAF_EVPN_OUT );
+            }
+            neighbor 172.16.0.1 {
+                description "facing_leaf2-evpn-overlay";
+                local-address 172.16.0.9;
+                peer-as 64515;
+                family evpn {
+                    signaling;
+                }
+                export ( SPINE_TO_LEAF_EVPN_OUT );
+            }
+            neighbor 172.16.0.2 {
+                description "facing_leaf3-evpn-overlay";
+                local-address 172.16.0.9;
+                peer-as 64516;
+                family evpn {
+                    signaling;
+                }
+                export ( SPINE_TO_LEAF_EVPN_OUT );
+            }
+        }
+    }
+    lldp {
+        port-id-subtype interface-name;
+        port-description-type interface-description;
+        neighbour-port-info-display port-id;
+        interface all;
+    }
+    replace: rstp {
+        disable;
+    }
+}
+policy-options {
+    community DEFAULT_DIRECT_V4 {
+        members [ 1:20007 21001:26000 ];
+    }
+    community FROM_SPINE_EVPN_TIER {
+        members [ 0:14 ];
+    }
+    community FROM_SPINE_FABRIC_TIER {
+        members [ 0:15 ];
+    }
+    policy-statement AllPodNetworks {
+        term AllPodNetworks-10 {
+            from {
+                family inet;
+                protocol direct;
+            }
+            then {
+                community add DEFAULT_DIRECT_V4;
+                accept;
+            }
+        }
+        term AllPodNetworks-100 {
+            then reject;
+        }
+    }
+    policy-statement BGP-AOS-Policy {
+        term BGP-AOS-Policy-10 {
+            from {
+                policy AllPodNetworks;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-20 {
+            from {
+                protocol bgp;
+            }
+            then accept;
+        }
+        term BGP-AOS-Policy-100 {
+            then reject;
+        }
+    }
+    policy-statement SPINE_TO_LEAF_EVPN_OUT {
+        term SPINE_TO_LEAF_EVPN_OUT-10 {
+            then {
+                community add FROM_SPINE_EVPN_TIER;
+                accept;
+            }
+        }
+    }
+    policy-statement SPINE_TO_LEAF_FABRIC_OUT {
+        term SPINE_TO_LEAF_FABRIC_OUT-10 {
+            then {
+                community add FROM_SPINE_FABRIC_TIER;
+                accept;
+            }
+        }
+    }
+    policy-statement PFE-LB {
+        then {
+            load-balance per-packet;
+        }
+    }
+}

@@ -1,0 +1,30 @@
+# Apstra instance configuration
+#
+# Copy this file to instances.yaml and fill in your details.
+# instances.yaml is git-ignored because it contains credentials.
+#
+# ssl_verify: set to false for self-signed certificates, which is typical
+# in lab and most production Apstra deployments. Set to true if your
+# instance has a valid CA-signed certificate.
+#
+# Credentials can also be provided via environment variables to avoid
+# storing secrets on disk. The variable name is derived from the instance
+# name — uppercased, hyphens replaced with underscores, prefixed with APSTRA_:
+#
+#   APSTRA_DC_PRIMARY_USERNAME=admin
+#   APSTRA_DC_PRIMARY_PASSWORD=secretpassword
+#
+# Environment variables take precedence over values in this file.
+
+instances:
+  - name: dc-primary
+    host: https://apstra.example.com
+    username: admin
+    password: changeme
+    ssl_verify: false
+
+  # - name: dc-secondary
+  #   host: https://apstra-dr.example.com
+  #   username: admin
+  #   password: changeme
+  #   ssl_verify: false
