@@ -3,14 +3,15 @@ tools/telemetry.py
 
 MCP tools for device telemetry data queried directly from the Apstra API.
 
-  get_interface_counters    — raw error/traffic counters per interface
-  get_interface_utilisation — utilisation % and error rates from IBA probe
-  get_system_telemetry      — CPU and memory per device
+  get_interface_counters    — raw error/traffic counters per interface (live)
+  get_interface_utilisation — utilisation % and error rates from IBA probe (live)
+  get_system_telemetry      — CPU and memory per device (live)
+  get_interface_error_trend — time-series of error growth for one interface (db)
+  get_top_error_growers     — which interfaces are accumulating errors fastest (db)
 
-Data source: live Apstra API.  Every call makes one or more HTTP requests to
-the Apstra controller, which in turn has cached the values from the streaming
-telemetry it receives from each managed device.  Results are typically 30–120
-seconds behind real-time depending on the probe sampling period.
+Live tools query the Apstra controller on every call.
+Trend tools query the local CounterStore, which the counter_poller populates
+every 5 minutes with snapshots from every managed system.
 
 Use get_systems to discover valid system_id values — it is the `system_id`
 field on each system object (e.g. "5254002D005F"), NOT the graph node `id`.
@@ -343,5 +344,218 @@ def register(mcp):
             "_meta": {
                 "data_source": "live_apstra_api",
                 "note": "Values are polled from device streaming telemetry, typically 30–120 s behind real-time.",
+            },
+        }
+
+    # ── Tool 4: get_interface_error_trend ─────────────────────────────────────
+
+    @mcp.tool()
+    async def get_interface_error_trend(
+        system_id: str,
+        interface_name: str,
+        hours_back: int = 24,
+        instance_name: str = None,
+        ctx: Context = None,
+    ) -> dict:
+        """
+        Returns a time-series of error counter *growth* for a single interface,
+        using locally stored counter snapshots collected every 5 minutes.
+
+        This is the primary tool for detecting creeping errors — e.g. an
+        interface where FCS errors are slowly increasing over hours or days,
+        indicating a physical layer degradation before it causes an outage.
+
+        Use this tool when you want to answer questions like:
+          - "Is ge-0/0/1 on Leaf3 accumulating CRC/FCS errors over time?"
+          - "When did errors start appearing on this interface?"
+          - "Are the errors getting worse, improving, or stable?"
+          - "Did the error rate change after the maintenance window?"
+          - "Are there any counter resets (device reboots) in the window?"
+
+        Each row in the `trend` list represents the change in counter values
+        between two consecutive 5-minute poll snapshots:
+
+          polled_at         — timestamp when the later snapshot was taken
+          interval_seconds  — seconds between the two snapshots
+          fcs_errors        — new FCS/CRC errors in this interval
+          alignment_errors  — new alignment errors
+          symbol_errors     — new symbol errors
+          rx_error_packets  — new RX error packets
+          tx_error_packets  — new TX error packets
+          runts             — new undersized frames
+          giants            — new oversized frames
+          rx_discard_packets / tx_discard_packets  — new discards
+          rx_bytes / tx_bytes  — traffic volume in this interval (context)
+          total_errors      — sum of all error counter deltas in this interval
+          has_reset         — True if a counter decreased (device reboot/wrap);
+                              error deltas are set to 0 for that interval
+
+        Parameters
+        ----------
+        system_id      : Hardware chassis serial (e.g. "5254002D005F").
+        interface_name : Exact interface name as returned by the API
+                         (e.g. "ge-0/0/1").
+        hours_back     : How many hours of history to return (1–168).
+                         Default 24 hours.
+        instance_name  : Target a specific Apstra instance.
+
+        Data source: local counter_store (populated every 5 min by counter_poller)
+        Coverage    : Available from first poll after server startup.
+        Note        : Returns empty trend list if fewer than 2 snapshots exist
+                      in the requested window (not enough data to compute deltas).
+        """
+        sessions = ctx.lifespan_context["sessions"]
+        target = [s for s in sessions if instance_name is None or s.name == instance_name]
+        if not target:
+            return {"error": f"No session found for instance '{instance_name}'"}
+
+        session = target[0]
+        counter_store = ctx.lifespan_context["counter_store"]
+        hours_back = max(1, min(hours_back, 168))
+
+        trend = counter_store.get_error_trend(
+            session.name, system_id, interface_name, hours_back=hours_back
+        )
+
+        coverage = counter_store.get_coverage_summary(session.name)
+        total_errors = sum(row["total_errors"] for row in trend)
+        max_interval_errors = max((row["total_errors"] for row in trend), default=0)
+
+        return {
+            "system_id":              system_id,
+            "interface_name":         interface_name,
+            "instance":               session.name,
+            "hours_back":             hours_back,
+            "data_point_count":       len(trend),
+            "total_errors":           total_errors,
+            "max_errors_in_interval": max_interval_errors,
+            "has_any_errors":         total_errors > 0,
+            "trend":                  trend,
+            "_meta": {
+                "data_source": "local_counter_store",
+                "poll_interval_seconds": 300,
+                "oldest_data": coverage.get("oldest_snapshot"),
+                "newest_data": coverage.get("newest_snapshot"),
+                "note": (
+                    "Values are deltas between consecutive 5-min snapshots. "
+                    "Empty trend means insufficient data — the counter poller "
+                    "needs at least 2 snapshots (~10 min after server start)."
+                ),
+            },
+        }
+
+    # ── Tool 5: get_top_error_growers ─────────────────────────────────────────
+
+    @mcp.tool()
+    async def get_top_error_growers(
+        hours_back: int = 24,
+        top_n: int = 20,
+        blueprint_id: str = None,
+        instance_name: str = None,
+        ctx: Context = None,
+    ) -> dict:
+        """
+        Returns the interfaces that have accumulated the most error counter
+        growth over the specified time window, ranked worst-first.
+
+        Use this tool when you want to answer questions like:
+          - "Which interfaces are accumulating errors most rapidly right now?"
+          - "Are there any error trends I should be concerned about after
+            yesterday's change window?"
+          - "Does any interface have a pattern of increasing FCS errors
+            that could indicate a degrading cable or SFP?"
+          - "Show me the health of all fabric uplinks over the past week."
+
+        The tool queries the local counter time-series database populated by
+        the counter_poller.  For each interface, it computes the cumulative
+        error growth over the window and returns a ranked summary.
+
+        Fields returned per interface
+        -----------------------------
+          system_id           — hardware chassis serial
+          interface_name
+          snapshot_count      — number of 5-min polls available in the window
+          total_fcs_errors    — total new FCS/CRC errors over the window
+          total_alignment_errors
+          total_symbol_errors
+          total_rx_error_packets / total_tx_error_packets
+          total_runts / total_giants
+          total_discards      — rx_discard + tx_discard totals
+          total_errors        — sum of all error counter growth
+          error_rate_per_hour — total_errors / hours_back
+          reset_count         — number of intervals with a counter reset
+          has_any_errors      — True if any error counter grew
+
+        Results are sorted by total_errors descending.
+
+        Parameters
+        ----------
+        hours_back    : Look-back window (1–168 hours).  Default 24 hours.
+        top_n         : Maximum number of interfaces to return.  Default 20.
+        blueprint_id  : Optional.  If provided, restrict results to systems
+                        in this blueprint (resolved via the graph registry).
+                        If omitted, all systems on the instance are included.
+        instance_name : Target a specific Apstra instance.
+
+        Data source: local counter_store (populated every 5 min by counter_poller)
+        """
+        sessions = ctx.lifespan_context["sessions"]
+        target = [s for s in sessions if instance_name is None or s.name == instance_name]
+        if not target:
+            return {"error": f"No session found for instance '{instance_name}'"}
+
+        session = target[0]
+        counter_store = ctx.lifespan_context["counter_store"]
+        hours_back = max(1, min(hours_back, 168))
+
+        # Optionally resolve blueprint → system_ids via graph registry
+        system_ids: list[str] | None = None
+        if blueprint_id:
+            try:
+                registry = ctx.lifespan_context["graph_registry"]
+                _SYSTEMS_CYPHER = (
+                    "MATCH (sw:system) "
+                    "WHERE sw.system_type = 'switch' "
+                    "RETURN sw.system_id"
+                )
+                graph = await registry.get_or_rebuild(session, blueprint_id)
+                rows = graph.query(_SYSTEMS_CYPHER)
+                system_ids = [
+                    r["sw.system_id"] for r in rows
+                    if r.get("sw.system_id")
+                ]
+            except Exception as exc:
+                return {
+                    "error": f"Failed to resolve systems for blueprint '{blueprint_id}': {exc}",
+                    "hint": "Use get_blueprints to verify the blueprint_id is valid.",
+                }
+
+        results = counter_store.get_top_error_growers(
+            instance_name=session.name,
+            system_ids=system_ids,
+            hours_back=hours_back,
+            top_n=top_n,
+        )
+
+        coverage = counter_store.get_coverage_summary(session.name)
+        error_count = sum(1 for r in results if r["has_any_errors"])
+
+        return {
+            "instance":               session.name,
+            "blueprint_id":           blueprint_id,
+            "hours_back":             hours_back,
+            "top_n":                  top_n,
+            "interface_count":        len(results),
+            "interfaces_with_errors": error_count,
+            "interfaces":             results,
+            "_meta": {
+                "data_source": "local_counter_store",
+                "poll_interval_seconds": 300,
+                "oldest_data": coverage.get("oldest_snapshot"),
+                "newest_data": coverage.get("newest_snapshot"),
+                "coverage_note": (
+                    f"Store has {coverage.get('snapshot_count', 0)} snapshots "
+                    f"across {coverage.get('interface_count', 0)} interfaces."
+                ),
             },
         }

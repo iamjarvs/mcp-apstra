@@ -9,8 +9,10 @@ from fastmcp.server.middleware.timing import TimingMiddleware
 
 from config.settings import load_sessions
 from primitives.anomaly_store import AnomalyStore
+from primitives.counter_store import CounterStore
 from primitives.graph_client import BlueprintGraphRegistry
 from handlers.anomaly_poller import run_anomaly_poller
+from handlers.counter_poller import run_counter_poller
 from tools import anomalies as anomalies_tool
 from tools import bgp as bgp_tool
 from tools import blueprints as blueprints_tool
@@ -34,6 +36,7 @@ async def lifespan(app):
     sessions = load_sessions()
     registry = BlueprintGraphRegistry()
     store = AnomalyStore()
+    counter_store = CounterStore()
     for session in sessions:
         await session.authenticate()
         session.start_background_refresh()
@@ -41,10 +44,21 @@ async def lifespan(app):
         run_anomaly_poller(sessions, store),
         name="anomaly-poller",
     )
-    yield {"sessions": sessions, "graph_registry": registry, "anomaly_store": store}
+    counter_poller_task = asyncio.create_task(
+        run_counter_poller(sessions, counter_store),
+        name="counter-poller",
+    )
+    yield {
+        "sessions":      sessions,
+        "graph_registry": registry,
+        "anomaly_store": store,
+        "counter_store": counter_store,
+    }
     poller_task.cancel()
+    counter_poller_task.cancel()
     registry.close_all()
     store.close()
+    counter_store.close()
 
 
 mcp = FastMCP(

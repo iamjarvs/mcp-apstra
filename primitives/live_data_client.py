@@ -417,3 +417,30 @@ async def query_probe_stage(
         f"/api/blueprints/{blueprint_id}/probes/{probe_id}/query",
         body=body,
     )
+
+
+async def get_all_systems(session) -> dict:
+    """
+    Returns all systems managed by this Apstra controller instance.
+
+    Response shape:
+      {
+        "items": [
+          {
+            "id":        "graph-node-uuid",
+            "system_id": "5254002D005F",   <- hardware chassis serial
+            "status":    { ... },
+            ...
+          }, ...
+        ]
+      }
+
+    `system_id` is the hardware chassis serial number used by the telemetry
+    APIs (e.g. /api/systems/{system_id}/counters).
+
+    Note: `id` is the Apstra graph node ID, NOT the same as `system_id`.
+    Managed systems that have not yet been assigned a chassis serial may have
+    system_id == None or an empty string — filter these out before using the
+    value as a counters endpoint key.
+    """
+    return await _request(session, "GET", "/api/systems")
