@@ -77,3 +77,7 @@ logs/
 # fastmcp.json is used for local dev config; it may contain instance-specific
 # paths or settings that should not be shared.
 fastmcp.json
+
+# ── Manual testing ───────────────────────────────────────────────────────────
+# Test scenarios document contains internal workflow notes; keep local only.
+MANUAL_TEST_SCENARIOS.md
