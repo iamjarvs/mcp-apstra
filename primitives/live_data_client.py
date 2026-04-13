@@ -262,3 +262,158 @@ async def get_anomaly_trace(
             "identity": identity,
         },
     )
+
+
+# ── Telemetry APIs ─────────────────────────────────────────────────────────────
+
+async def get_interface_counters(session, system_id: str) -> dict:
+    """
+    Returns the latest raw interface counters for every interface on a system.
+
+    Response shape:
+      {
+        "items": [
+          {
+            "system_id": "...",
+            "interface_name": "ge-0/0/0",
+            "rx_unicast_packets": int,
+            "rx_broadcast_packets": int,
+            "rx_multicast_packets": int,
+            "rx_error_packets": int,
+            "rx_discard_packets": int,
+            "rx_bytes": int,
+            "tx_unicast_packets": int,
+            "tx_broadcast_packets": int,
+            "tx_multicast_packets": int,
+            "tx_error_packets": int,
+            "tx_discard_packets": int,
+            "tx_bytes": int,
+            "alignment_errors": int,
+            "fcs_errors": int,
+            "symbol_errors": int,
+            "runts": int,
+            "giants": int,
+            "last_fetched_at": "ISO-8601"
+          }, ...
+        ],
+        "delta_microseconds": int
+      }
+
+    `system_id` is the hardware chassis serial number (e.g. "5254002D005F").
+    """
+    return await _request(session, "GET", f"/api/systems/{system_id}/counters")
+
+
+async def get_system_resource_util(session, system_id: str) -> dict:
+    """
+    Returns the latest CPU and memory utilisation for a system.
+
+    Response shape:
+      {
+        "items": [
+          {
+            "system_id": "...",
+            "type": "resource_util",
+            "key": "system_cpu_utilization",   # or "system_memory_utilization"
+            "actual": {"value": "2"},            # percentage as a string
+            "last_fetched_at": "ISO-8601"
+          }, ...
+        ]
+      }
+
+    `system_id` is the hardware chassis serial number (e.g. "5254002D005F").
+    """
+    return await _request(
+        session, "GET",
+        f"/api/systems/{system_id}/services/resource_util/data",
+    )
+
+
+# ── IBA Probe APIs ─────────────────────────────────────────────────────────────
+
+async def get_probes(session, blueprint_id: str) -> dict:
+    """
+    Returns the list of all IBA probes configured in a blueprint.
+
+    Response shape:
+      {
+        "items": [
+          {
+            "id": "uuid",
+            "label": "Device Traffic",
+            "description": "...",
+            "disabled": false,
+            "state": "operational",
+            "probe_state": "...",
+            "anomaly_count": int,
+            "stages": [ {"name": "...", ...}, ... ],
+            "predefined_probe": "...",
+            "updated_at": "ISO-8601"
+          }, ...
+        ],
+        "total_count": int
+      }
+    """
+    return await _request(session, "GET", f"/api/blueprints/{blueprint_id}/probes")
+
+
+async def get_probe(session, blueprint_id: str, probe_id: str) -> dict:
+    """
+    Returns full detail for a single IBA probe including all processor and
+    stage definitions.
+
+    Response shape: same fields as items[] in get_probes(), plus full
+    "processors" list with graph_query, properties, and stage metadata.
+    """
+    return await _request(
+        session, "GET",
+        f"/api/blueprints/{blueprint_id}/probes/{probe_id}",
+    )
+
+
+async def query_probe_stage(
+    session,
+    blueprint_id: str,
+    probe_id: str,
+    stage: str,
+    begin_time: str | None = None,
+    end_time: str | None = None,
+    anomalous_only: bool = False,
+    per_page: int = 100,
+) -> dict:
+    """
+    Queries the time-series output of a specific stage within an IBA probe.
+
+    Response shape:
+      {
+        "type": "table",
+        "description": "...",
+        "items": [
+          {
+            "timestamp": "ISO-8601",
+            "value": <depends on stage>,
+            "id": int,
+            "properties": { ... stage-specific properties ... }
+          }, ...
+        ],
+        "total_count": int
+      }
+
+    The items[] schema varies by probe and stage — the properties dict always
+    contains system_id and any grouping keys defined by the probe's graph_query.
+
+    `stage` must be the exact stage name string as returned by get_probe() in
+    the stages[].name list.
+    """
+    body: dict = {"stage": stage, "per_page": per_page}
+    if begin_time:
+        body["begin_time"] = begin_time
+    if end_time:
+        body["end_time"] = end_time
+    if anomalous_only:
+        body["anomalous_only"] = anomalous_only
+    return await _request(
+        session, "POST",
+        f"/api/blueprints/{blueprint_id}/probes/{probe_id}/query",
+        body=body,
+    )

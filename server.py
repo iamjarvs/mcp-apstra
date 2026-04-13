@@ -25,6 +25,8 @@ from tools import anomaly_timeline as anomaly_timeline_tool
 from tools import anomaly_analytics as anomaly_analytics_tool
 from tools import run_commands as run_commands_tool
 from tools import virtual_networks as virtual_networks_tool
+from tools import telemetry as telemetry_tool
+from tools import probes as probes_tool
 
 
 @asynccontextmanager
@@ -79,6 +81,8 @@ reference_tool.register(mcp)
 run_commands_tool.register(mcp)
 systems_tool.register(mcp)
 virtual_networks_tool.register(mcp)
+telemetry_tool.register(mcp)
+probes_tool.register(mcp)
 
 if os.environ.get("MCP_VERBOSE"):
     logging.basicConfig(
