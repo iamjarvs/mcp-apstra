@@ -1,4 +1,7 @@
+from typing import Annotated
+
 from fastmcp import Context
+from pydantic import Field
 
 from handlers.bgp import handle_get_external_peerings, handle_get_fabric_peerings
 
@@ -7,69 +10,38 @@ def register(mcp):
 
     @mcp.tool()
     async def get_external_blueprint_peerings(
-        blueprint_id: str,
-        device: str = None,
-        instance_name: str = None,
+        blueprint_id: Annotated[
+            str,
+            "Apstra blueprint ID. Use get_blueprints to discover valid values.",
+        ],
+        device: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Hostname of a fabric edge device to scope the query (e.g. 'Leaf3'). Omit for all external peerings.",
+            ),
+        ] = None,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns BGP peerings between Apstra-managed fabric devices and external
-        systems — routers, firewalls, servers, or any device that is not owned
-        or configured by this Apstra blueprint.
+        Return BGP peerings between fabric devices and external systems (routers, firewalls, servers).
 
-        This is explicitly NOT intra-fabric BGP (e.g. spine-leaf underlay or
-        leaf-leaf EVPN sessions). Both Cypher queries filter on
-        system.external = true for the remote peer, so only peerings that exit
-        the fabric boundary are returned.
+        Use this to map the fabric edge: which leaf or spine devices have external sessions,
+        what ASNs and address families (IPv4/IPv6 SAFI) are configured, and over which
+        interfaces. Only returns sessions where the remote peer is outside the blueprint
+        (system.external = true). For intra-fabric underlay sessions between managed devices
+        use get_fabric_bgp_peerings instead. Reflects design intent from the blueprint graph,
+        not live BGP neighbour state — use run_device_commands with "show bgp summary" to
+        verify live session state.
 
-        This reflects design intent from the blueprint graph, not live BGP
-        neighbour state. Use this to understand what external sessions are
-        configured and from which fabric edge devices — not whether they are
-        currently established.
-
-        Data source: graph database (graph_client). The graph is automatically
-        rebuilt if the blueprint version has changed since the last query.
-
-        Use get_blueprints to discover valid blueprint_id values and
-        get_systems to discover valid device hostnames.
-
-        Args:
-            blueprint_id:  The Apstra blueprint ID to query.
-            device:        Optional. Hostname or label of a specific fabric
-                           device to scope the query (e.g. "Leaf3"). If
-                           omitted, all external peerings in the blueprint are
-                           returned. The local side is always the named fabric
-                           device; the remote side is always the external peer.
-            instance_name: Optional. The name of the Apstra instance to query
-                           (as defined in instances.yaml). If omitted, all
-                           instances are queried and results are merged.
-
-        Returns:
-            When querying a single instance:
-              - instance: name of the Apstra instance queried
-              - blueprint_id: the blueprint queried
-              - device: the device filter used (or None for all fabric devices)
-              - peerings: list of external peering objects, each with:
-                  session_id       — protocol_session graph node ID
-                  bfd              — BFD enabled flag
-                  ipv4_safi        — "enabled" or "disabled"
-                  ipv6_safi        — "enabled" or "disabled"
-                  ttl              — BGP TTL (2 = eBGP single-hop typical)
-                  local            — fabric side: hostname, role, serial,
-                                     external (always False), interface,
-                                     subinterface, ip_address, vlan_id, local_asn
-                  remote           — external peer: hostname, role, serial
-                                     (null if unmanaged), external (always True),
-                                     interface (null if unmanaged), subinterface
-                                     (null if unmanaged), ip_address, vlan_id,
-                                     local_asn
-              - count: total number of external peerings returned
-
-            When querying all instances:
-              - instance: "all"
-              - blueprint_id, device: as above
-              - results: list of per-instance result objects
-              - total_count: sum of peerings across all instances
+        Each peering includes: session_id, bfd (bool), ipv4_safi, ipv6_safi, ttl,
+        local (hostname, role, interface, ip_address, local_asn) and remote (hostname,
+        ip_address, local_asn; interface and serial are null for unmanaged external peers).
+        Data source: graph database (auto-rebuilt when blueprint version changes).
         """
         return await handle_get_external_peerings(
             ctx.lifespan_context["sessions"],
@@ -81,56 +53,37 @@ def register(mcp):
 
     @mcp.tool()
     async def get_fabric_bgp_peerings(
-        blueprint_id: str,
-        device: str = None,
-        instance_name: str = None,
+        blueprint_id: Annotated[
+            str,
+            "Apstra blueprint ID. Use get_blueprints to discover valid values.",
+        ],
+        device: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Device hostname to anchor the query (e.g. 'Leaf2'). Omit to return all intra-fabric peerings deduplicated.",
+            ),
+        ] = None,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns intra-fabric eBGP peerings between Apstra-managed devices —
-        spine-leaf underlay sessions, ESI peer links, and any other eBGP
-        session where both peers are managed by this blueprint.
+        Return intra-fabric eBGP peerings between Apstra-managed devices.
 
-        This is explicitly NOT external BGP (fabric-to-outside). Both Cypher
-        queries filter on system.external = false for both peers, so only
-        sessions that stay inside the fabric boundary are returned. Use
-        get_external_blueprint_peerings for sessions to external systems.
+        Use this to trace the underlay BGP topology: spine-leaf sessions, ESI peer links,
+        what ASNs are assigned to each device, what interface IPs are used on each link,
+        and what MTU is configured. Only returns sessions where both peers are inside the
+        blueprint (system.external = false for both ends). For peerings to external systems
+        use get_external_blueprint_peerings. Optionally scope to one device to see only its
+        sessions. Reflects design intent — not live BGP session state.
 
-        Data source: graph database (graph_client). The graph is automatically
-        rebuilt if the blueprint version has changed since the last query.
-
-        Use get_blueprints to discover valid blueprint_id values and
-        get_systems to discover valid device hostnames.
-
-        Args:
-            blueprint_id:  The Apstra blueprint ID to query.
-            device:        Optional. Hostname or label of a specific fabric
-                           device to anchor the query (e.g. "Leaf2"). If
-                           omitted, all intra-fabric peerings are returned
-                           deduplicated (each session appears once).
-            instance_name: Optional. The name of the Apstra instance to query
-                           (as defined in instances.yaml). If omitted, all
-                           instances are queried and results are merged.
-
-        Returns:
-            When querying a single instance:
-              - instance: name of the Apstra instance queried
-              - blueprint_id: the blueprint queried
-              - device: the device filter used (or None for all peerings)
-              - peerings: list of fabric peering objects, each with:
-                  link_id    — link graph node ID
-                  link_role  — link role (e.g. "spine_leaf", "leaf_peer_link")
-                  link_speed — link speed (e.g. "1G", "10G")
-                  a_side     — one endpoint: hostname, role, serial, asn,
-                               interface, description, ip_address, l3_mtu
-                  b_side     — the other endpoint: same fields as a_side
-              - count: total number of fabric peerings returned
-
-            When querying all instances:
-              - instance: "all"
-              - blueprint_id, device: as above
-              - results: list of per-instance result objects
-              - total_count: sum of peerings across all instances
+        Each peering includes: link_role (spine_leaf/spine_superspine/leaf_peer_link/etc.),
+        link_speed, a_side and b_side (each with hostname, role, serial, asn, interface
+        name, interface description, ip_address, l3_mtu).
+        Data source: graph database (auto-rebuilt when blueprint version changes).
         """
         return await handle_get_fabric_peerings(
             ctx.lifespan_context["sessions"],

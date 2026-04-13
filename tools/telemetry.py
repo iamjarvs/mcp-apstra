@@ -17,7 +17,10 @@ Use get_systems to discover valid system_id values — it is the `system_id`
 field on each system object (e.g. "5254002D005F"), NOT the graph node `id`.
 """
 
+from typing import Annotated
+
 from fastmcp import Context
+from pydantic import Field
 
 from primitives import live_data_client
 
@@ -28,50 +31,38 @@ def register(mcp):
 
     @mcp.tool()
     async def get_interface_counters(
-        system_id: str,
-        interface: str = None,
-        errors_only: bool = False,
-        instance_name: str = None,
+        system_id: Annotated[
+            str,
+            "Hardware chassis serial (e.g. '5254002D005F'). Use the system_id field from get_systems — NOT the id field.",
+        ],
+        interface: Annotated[
+            str | None,
+            Field(default=None, description="Filter to one interface name (e.g. 'ge-0/0/1'). Omit to return all interfaces."),
+        ] = None,
+        errors_only: Annotated[
+            bool,
+            Field(default=False, description="If True, return only interfaces with at least one non-zero error counter (fcs_errors, alignment_errors, symbol_errors, rx/tx_error_packets, runts, giants)."),
+        ] = False,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns the latest raw interface counters polled from a specific device
-        by Apstra's streaming telemetry infrastructure.
+        Return the latest raw cumulative interface counters polled from a device.
 
-        Use this tool when you want to answer questions like:
-          - "Are there any CRC or FCS errors on Leaf3?"
-          - "What is the raw packet and byte throughput on ge-0/0/1?"
-          - "Are there any rx_discard or tx_discard counts on Spine1's uplinks?"
-          - "Is this interface dropping or erroring at all?"
+        Use this to check whether an interface has error activity at all (set errors_only=True
+        for a fast scan across all ports), inspect exact byte and packet counts, or confirm
+        there are no FCS, alignment, or discard errors. These are cumulative totals since
+        last device reset, not per-second rates — use get_interface_utilisation for rates
+        and utilisation percentages. Use get_interface_error_trend to see how errors have
+        grown over time.
 
-        Counter fields returned per interface
-        -------------------------------------
-          rx_unicast_packets, rx_broadcast_packets, rx_multicast_packets
-          rx_error_packets, rx_discard_packets, rx_bytes
-          tx_unicast_packets, tx_broadcast_packets, tx_multicast_packets
-          tx_error_packets, tx_discard_packets, tx_bytes
-          alignment_errors, fcs_errors, symbol_errors, runts, giants
-          last_fetched_at — when Apstra last polled this counter
-
-        These are cumulative counters since the last device reset, not rates.
-        For per-second rates and utilisation percentages, use
-        get_interface_utilisation instead.
-
-        Parameters
-        ----------
-        system_id      : Hardware chassis serial number (e.g. "5254002D005F").
-                         Use get_systems to discover valid values — it is the
-                         `system_id` field, NOT the `id` field.
-        interface      : Optional filter — return only this interface name
-                         (e.g. "ge-0/0/1").  Returns all interfaces if omitted.
-        errors_only    : If True, return only interfaces that have at least one
-                         non-zero error counter (fcs_errors, alignment_errors,
-                         rx_error_packets, tx_error_packets, runts, giants,
-                         symbol_errors).  Useful for quickly finding problem ports.
-        instance_name  : Target a specific Apstra instance.
-
-        Data source: live Apstra API → device streaming telemetry
-        Latency: counters are typically 30–120 s behind real-time
+        Each interface includes: interface_name, rx/tx_bytes, rx/tx unicast/broadcast/
+        multicast packets, fcs_errors, alignment_errors, symbol_errors, runts, giants,
+        rx/tx_error_packets, rx/tx_discard_packets, has_errors (bool), last_fetched_at.
+        Data source: live Apstra API → device streaming telemetry (30–120 s behind real-time).
         """
         sessions = ctx.lifespan_context["sessions"]
         target = [s for s in sessions if instance_name is None or s.name == instance_name]

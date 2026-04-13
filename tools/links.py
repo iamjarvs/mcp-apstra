@@ -1,4 +1,7 @@
+from typing import Annotated
+
 from fastmcp import Context
+from pydantic import Field
 
 from handlers.links import handle_get_link_list
 
@@ -7,72 +10,40 @@ def register(mcp):
 
     @mcp.tool()
     async def get_link_list(
-        blueprint_id: str,
-        system_id: str = None,
-        instance_name: str = None,
+        blueprint_id: Annotated[
+            str,
+            "Apstra blueprint ID. Use get_blueprints to discover valid values.",
+        ],
+        system_id: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    "Hardware chassis serial to filter to links on that switch "
+                    "(e.g. '525400AA7236'). Omit to return all fabric links."
+                ),
+            ),
+        ] = None,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns physical links in a blueprint, with endpoints, link type,
-        role, and speed.
+        Return physical links in a blueprint with both endpoints, link role, and speed.
 
-        When system_id is supplied, only links connected to that system are
-        returned. When omitted, all links in the fabric are returned — useful
-        for capacity planning and verifying redundancy across the whole fabric.
+        Use this to understand the fabric cabling: which devices are connected, over what
+        speeds, in what fabric role. When system_id is omitted, all fabric links are
+        returned — useful for capacity planning, redundancy verification, or finding
+        asymmetric link speeds. When system_id is provided, only links with one endpoint
+        on that switch are returned, which is useful for device-focused investigation.
 
-        Each link object contains a local_interface and remote_interface
-        describing both endpoints. The description field on each interface
-        encodes the connected peer in the form "facing_<hostname>:<port>"
-        (fabric links) or "to.<peer>" (server/host-facing links).
-
-        Data source: graph database (graph_client).
-
-        Use get_blueprints to discover valid blueprint_id values.
-        Use get_systems to discover valid system_id values (the system_id
-        field — hardware chassis serial — NOT the graph node id).
-
-        Args:
-            blueprint_id:  The Apstra blueprint ID to query.
-            system_id:     Optional. Hardware chassis serial of a specific
-                           switch (e.g. "525400AA7236"). When provided, only
-                           links with one endpoint on this system are returned.
-                           When omitted, all fabric links are returned.
-            instance_name: Optional. The name of the Apstra instance to query
-                           (as defined in instances.yaml). If omitted, all
-                           instances are queried and results are merged.
-
-        Returns:
-            When querying a single instance:
-              - instance:     name of the Apstra instance queried
-              - blueprint_id: the blueprint queried
-              - system_id:    hardware serial filter applied (or null)
-              - links: list of link objects, each with:
-                  link_id          — Apstra link ID encoding both endpoint
-                                     labels (e.g.
-                                     "spine1<->_single_rack_001_leaf1[1]")
-                  link_type        — ethernet / aggregate_link / logical_link
-                  role             — fabric role of the link:
-                                     spine_leaf, spine_superspine,
-                                     leaf_l2_server, leaf_l3_server,
-                                     to_generic, leaf_access, to_external_router,
-                                     leaf_leaf, leaf_peer_link, etc.
-                  speed            — link speed string (e.g. "10G", "100G",
-                                     "25G") or null if not set
-                  deploy_mode      — deploy (normal) / drain (maintenance)
-                  group_label      — link group label, or null
-                  local_interface  — interface on the queried system side
-                                     (or lower-id side for fabric-wide queries):
-                                       id, if_name, if_type, description,
-                                       operation_state, ipv4_addr, ipv6_addr,
-                                       lag_mode, port_channel_id
-                  remote_interface — interface on the far-end side (same shape)
-              - count: total number of links returned
-
-            When querying all instances:
-              - instance: "all"
-              - blueprint_id, system_id: as above
-              - results: list of per-instance result objects (same shape)
-              - total_count: sum of link counts across all instances
+        Each link includes: link_id, link_type (ethernet/aggregate_link), role
+        (spine_leaf/spine_superspine/leaf_l2_server/leaf_peer_link/to_external_router/etc.),
+        speed (e.g. "10G", "100G"), deploy_mode, local_interface and remote_interface
+        (each with if_name, if_type, description, operation_state, ipv4_addr, lag_mode).
+        Data source: graph database (auto-rebuilt when blueprint version changes).
         """
         return await handle_get_link_list(
             ctx.lifespan_context["sessions"],

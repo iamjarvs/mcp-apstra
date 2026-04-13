@@ -1,67 +1,51 @@
-"""
-tools/anomaly_timeline.py
-
-MCP tools that query the rolling anomaly time-series store.
-
-The store is populated by the anomaly_poller background task that starts at
-server startup.  Three tools are exposed:
-
-  get_anomaly_events   — query raise/clear events with optional filters
-  get_anomaly_summary  — counts and coverage metadata for a blueprint
-  get_active_anomalies_from_store — current state from the local store
-                                    (same intent as get_current_anomalies but
-                                     cached — zero additional API calls)
-"""
-
 from datetime import datetime, timezone, timedelta
+from typing import Annotated
 
 from fastmcp import Context
+from pydantic import Field
 
 
 def register(mcp):
     @mcp.tool()
     async def get_anomaly_events(
-        blueprint_id: str,
-        hours_back: int = 24,
-        anomaly_type: str = None,
-        device: str = None,
-        raised_only: bool = False,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        hours_back: Annotated[
+            int,
+            Field(default=24, description="How far back to look (1–168 hours). Default 24.", ge=1, le=168),
+        ] = 24,
+        anomaly_type: Annotated[
+            str | None,
+            Field(default=None, description="Filter to one type: bgp, cabling, interface, route, lag, mac, probe, deployment, liveness, config."),
+        ] = None,
+        device: Annotated[
+            str | None,
+            Field(default=None, description="Filter by device hostname (e.g. 'Leaf1')."),
+        ] = None,
+        raised_only: Annotated[
+            bool,
+            Field(default=False, description="If True, return only raise events (no clears)."),
+        ] = False,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
         Query the local anomaly time-series store for raise and clear events.
 
-        The store is built from 7 days of Apstra history at server startup
-        and updated every 60 seconds, so results are available instantly with
-        no additional API calls to Apstra.
+        Use this to see exactly when anomalies appeared and were resolved, trace the
+        sequence of events during an incident, or verify that a remediation actually
+        cleared a specific anomaly. The store is backfilled with 7 days of history at
+        startup and updated every 60 s — no API calls to Apstra on each invocation.
+        Filter by anomaly_type and device to narrow to a specific fault. Set raised_only=True
+        to see only fault-onset events without the corresponding clears.
 
-        Parameters
-        ----------
-        blueprint_id   : ID of the blueprint to query.
-        hours_back     : How far back to look (1–168).  Default 24 hours.
-        anomaly_type   : Filter to a single type: bgp, cabling, interface,
-                         route, lag, mac, probe, deployment, liveness, config.
-        device         : Filter by device hostname (e.g. "Leaf1").
-        raised_only    : If True, return only raise events (no clears).
-        instance_name  : Target a specific Apstra instance.
-
-        Returns
-        -------
-        A list of events, newest first.  Each event includes:
-          timestamp     — when the raise or clear was recorded
-          raised        — true = anomaly raised, false = anomaly cleared
-          anomaly_type  — e.g. "bgp", "interface"
-          device        — hostname of the affected device
-          expected      — what Apstra expects (the intent)
-          actual        — what was observed
-          identity      — full identity dict (uniquely identifies this anomaly)
-          first_detected — when this anomaly was first ever seen
-          source        — "trace_backfill", "trace_incremental", or
-                         "snapshot_diff" (how the event was captured)
-
-        Data source: local SQLite time-series store (anomaly_timeseries.db)
-        Updated: every 60 seconds by background poller
+        Each event includes: timestamp, raised (true = new anomaly, false = anomaly cleared),
+        anomaly_type (bgp/cabling/interface/route/lag/mac/probe/deployment/liveness/config),
+        device (hostname), expected (Apstra's intent), actual (observed state), identity
+        (dict uniquely identifying this anomaly instance), first_detected, source.
+        Returns newest-first, up to 500 events. Data source: local SQLite store.
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
@@ -101,22 +85,24 @@ def register(mcp):
 
     @mcp.tool()
     async def get_anomaly_summary(
-        blueprint_id: str,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns coverage and count statistics for the anomaly time-series store
-        for a given blueprint.
+        Return coverage and count statistics for the local anomaly store for a blueprint.
 
-        Shows how much history is available, which anomaly types have been seen,
-        how many raise and clear events are stored per type, and how many
-        anomalies are currently active according to the local store.
+        Use this before querying anomaly data to confirm data is available and understand
+        how much history is loaded. Shows whether the initial 7-day backfill has completed,
+        how many raise and clear events are stored per anomaly type, and how many anomalies
+        are currently active according to the store.
 
-        Also reports whether the initial 7-day backfill has completed for this
-        blueprint.
-
-        Data source: local SQLite time-series store (anomaly_timeseries.db)
+        Returns: backfill_ready (bool), last_poll_at, type_counts (raises/clears per
+        anomaly type), active_count (anomalies currently raised), oldest_event, newest_event.
+        Data source: local SQLite store (updated every 60 s by background poller).
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
@@ -150,31 +136,28 @@ def register(mcp):
 
     @mcp.tool()
     async def get_active_anomalies_from_store(
-        blueprint_id: str,
-        anomaly_type: str = None,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        anomaly_type: Annotated[
+            str | None,
+            Field(default=None, description="Filter by anomaly type (e.g. 'bgp', 'cabling', 'interface')."),
+        ] = None,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns anomalies that are currently active according to the local
-        time-series store — those whose most recent event is a raise with no
-        subsequent clear.
+        Return currently active anomalies from the local store with zero Apstra API calls.
 
-        Equivalent in intent to get_current_anomalies but served from the
-        local SQLite store (zero API calls to Apstra, instantaneous response).
-        Additionally returns first_detected and last_event_at timestamps that
-        the live API does not provide.
+        Use this as a fast alternative to get_current_anomalies when you also need
+        first_detected and last_event_at timestamps (which the live API does not provide),
+        or when API latency is a concern. An anomaly is active when its most recent store
+        event is a raise with no subsequent clear.
 
-        Use get_current_anomalies for the definitive real-time view, and this
-        tool when you need historical context alongside the current state.
-
-        Parameters
-        ----------
-        blueprint_id  : ID of the blueprint to query.
-        anomaly_type  : Optional filter by type.
-        instance_name : Target a specific Apstra instance.
-
-        Data source: local SQLite time-series store (anomaly_timeseries.db)
+        Each anomaly includes: anomaly_type, device, expected, actual, identity (unique key),
+        first_detected, last_event_at.
+        Data source: local SQLite store (updated every 60 s by background poller).
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:

@@ -1,23 +1,9 @@
-"""
-tools/anomaly_analytics.py
-
-Five MCP tools for deeper analysis of the anomaly time-series store.
-
-  get_anomaly_trend           — raise/clear counts per device over time
-  get_correlated_faults       — structural de-duplication of bilateral anomalies
-  get_fault_durations         — episode durations (raise→clear pairs)
-  get_device_anomaly_heatmap  — device × anomaly-type raise-count matrix
-  correlate_anomaly_events    — temporal fault clustering with OSI-layer analysis
-
-All tools read from the local SQLite anomaly store (zero Apstra API calls).
-The store is backfilled with 7 days of history at server startup and refreshed
-every 60 seconds by the background anomaly poller.
-"""
-
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
+from typing import Annotated
 
 from fastmcp import Context
+from pydantic import Field
 
 from primitives.anomaly_clustering import (
     OSI_LAYER,
@@ -32,40 +18,34 @@ def register(mcp):
 
     @mcp.tool()
     async def get_anomaly_trend(
-        blueprint_id: str,
-        anomaly_type: str,
-        hours_back: int = 24,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        anomaly_type: Annotated[
+            str,
+            "Anomaly type to trend (e.g. 'bgp', 'mac', 'interface', 'cabling', 'route', 'lag').",
+        ],
+        hours_back: Annotated[
+            int,
+            Field(default=24, description="Look-back window (1–168 hours). Default 24.", ge=1, le=168),
+        ] = 24,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Show how the rate of a specific anomaly type has changed over time,
-        broken down by device.
+        Show raise/clear rates for one anomaly type over time, broken down by device.
 
-        Use this tool when you want to answer questions like:
-          - "Is the BGP flapping getting better or worse on Leaf2?"
-          - "When did the MAC address anomalies start and are they increasing?"
-          - "Which device has the highest sustained anomaly rate this week?"
+        Use this to determine whether a fault is getting better or worse, find when it
+        started, and identify which devices are driving it. Bucket granularity is selected
+        automatically from the time window (≤64 h: 15 min; ≤24 h: 1 hr; ≤72 h: 4 hr; >72 h:
+        12 hr). A fabric-wide total is included alongside per-device rows so you can
+        distinguish a single-device problem from a fabric-wide event.
 
-        The bucket granularity is selected automatically from the time window:
-          ≤ 6 hours  → 15-minute buckets
-          ≤ 24 hours → 1-hour buckets
-          ≤ 72 hours → 4-hour buckets
-          > 72 hours → 12-hour buckets
-
-        A fabric-wide total is included alongside per-device rows so you can
-        distinguish a single device problem from a widespread event.
-
-        Parameters
-        ----------
-        blueprint_id  : Blueprint to query.
-        anomaly_type  : The anomaly type to trend (e.g. "bgp", "mac",
-                        "interface", "cabling", "route", "lag").
-        hours_back    : How far back to look (1–168).  Default 24 hours.
-        instance_name : Target a specific Apstra instance.
-
-        Data source: local SQLite anomaly store (anomaly_timeseries.db)
-        Updated: every 60 seconds
+        Returns: devices (list with device hostname, total_raises, trend list of
+        {bucket, raises, clears}) sorted by total_raises descending; fabric_total
+        (same buckets aggregated across all devices); bucket_size.
+        Data source: local SQLite anomaly store (updated every 60 s).
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
@@ -135,44 +115,34 @@ def register(mcp):
 
     @mcp.tool()
     async def get_correlated_faults(
-        blueprint_id: str,
-        anomaly_type: str,
-        hours_back: int = 168,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        anomaly_type: Annotated[
+            str,
+            "Anomaly type to de-duplicate ('bgp', 'cabling', 'interface', 'mac', etc.).",
+        ],
+        hours_back: Annotated[
+            int,
+            Field(default=168, description="Look-back window (1–168 hours). Default 168 (full 7 days).", ge=1, le=168),
+        ] = 168,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        De-duplicate anomalies that are structurally the same logical fault
-        but appear multiple times in the store due to Apstra's storage model.
+        De-duplicate anomalies that appear multiple times due to Apstra's bilateral storage model.
 
-        Use this tool when you want to answer questions like:
-          - "How many distinct BGP sessions are actually down vs. how many
-            raw anomaly rows exist?"
-          - "Is the cabling anomaly on Spine1 the same physical cable as
-            the one shown on Leaf2?"
-          - "How many unique logical faults are there after collapsing mirrors?"
+        Use this when the raw raise count looks inflated and you want to know how many distinct
+        logical faults actually exist. Applies three rules: (1) ghost-row removal — Apstra stores
+        some anomalies twice with no device hostname, these are dropped; (2) BGP bilateral
+        collapse — each BGP session generates an anomaly on both endpoints, pairs sharing the
+        same session IPs are collapsed to one entry; (3) cabling bilateral collapse — each cable
+        mismatch fires on both ends, pairs are matched via expected.neighbor_name.
 
-        De-duplication rules applied
-        ----------------------------
-        1. Ghost-row removal — Apstra creates a second identity row for the
-           same anomaly with no device hostname.  These are dropped.
-        2. BGP bilateral collapse — each BGP session generates an anomaly on
-           both endpoints.  Pairs sharing (frozenset{source_ip, dest_ip},
-           addr_family, vrf) are collapsed to one logical session entry.
-        3. Cabling bilateral collapse — each physical link mismatch generates
-           an alert on both cable ends.  Pairs are matched via
-           expected.neighbor_name cross-reference.
-
-        Parameters
-        ----------
-        blueprint_id  : Blueprint to query.
-        anomaly_type  : Anomaly type to de-duplicate
-                        ("bgp", "cabling", "interface", etc.).
-        hours_back    : Look-back window (1–168).  Default 168 (full 7 days).
-        instance_name : Target a specific Apstra instance.
-
-        Data source: local SQLite anomaly store (anomaly_timeseries.db)
-        Updated: every 60 seconds
+        Returns: raw_count, logical_count, dedup_ratio (fraction of rows removed), logical_faults
+        (list with anomaly_type, osi_layer, osi_label, devices, identity, first_detected,
+        bilateral_dedup bool, raw_count). Data source: local SQLite anomaly store.
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
@@ -244,45 +214,32 @@ def register(mcp):
 
     @mcp.tool()
     async def get_fault_durations(
-        blueprint_id: str,
-        anomaly_type: str = None,
-        hours_back: int = 168,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        anomaly_type: Annotated[
+            str | None,
+            Field(default=None, description="Filter by anomaly type (e.g. 'bgp', 'interface'). Omit for all types."),
+        ] = None,
+        hours_back: Annotated[
+            int,
+            Field(default=168, description="Look-back window (1–168 hours). Default 168 (full 7 days).", ge=1, le=168),
+        ] = 168,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Compute how long each anomaly episode lasted by pairing each raise
-        event with its subsequent clear.
+        Compute how long each anomaly episode lasted by pairing each raise with its subsequent clear.
 
-        Use this tool when you want to answer questions like:
-          - "Are the MAC address anomalies brief flaps (seconds) or sustained
-            outages (minutes)?"
-          - "What is the longest BGP session outage in the past week?"
-          - "Which device has experienced the most total downtime for
-            interface anomalies?"
-          - "Are anomalies getting cleared quickly or are they accumulating?"
+        Use this to distinguish brief flaps from sustained outages, find the longest outage in
+        a window, measure total downtime per device, and check whether anomalies are being resolved
+        promptly. Open episodes (raised but not yet cleared) are included with duration_s null.
 
-        Open episodes (raised but not yet cleared) are included with
-        ``cleared_at: null`` and ``duration_s: null``.
-
-        Per-device statistics returned
-        ------------------------------
-          episode_count       — total number of raise events
-          open_episodes       — raises not yet cleared
-          mean_duration_s     — average of closed episodes
-          max_duration_s      — longest single episode
-          total_downtime_s    — sum of all closed episode durations
-          episodes            — individual raise/clear pairs (capped at 100)
-
-        Parameters
-        ----------
-        blueprint_id  : Blueprint to query.
-        anomaly_type  : Optional filter by type.
-        hours_back    : Look-back window (1–168).  Default 168 (full 7 days).
-        instance_name : Target a specific Apstra instance.
-
-        Data source: local SQLite anomaly store (anomaly_timeseries.db)
-        Updated: every 60 seconds
+        Returns one entry per unique (device, anomaly identity) pair with: episode_count,
+        open_episodes, mean_duration_s, max_duration_s, total_downtime_s, and individual
+        episodes list (capped at 100 per device, each with raised_at, cleared_at, duration_s).
+        Sorted by total_downtime_s descending. Data source: local SQLite anomaly store.
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
@@ -370,38 +327,30 @@ def register(mcp):
 
     @mcp.tool()
     async def get_device_anomaly_heatmap(
-        blueprint_id: str,
-        hours_back: int = 168,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        hours_back: Annotated[
+            int,
+            Field(default=168, description="Look-back window (1–168 hours). Default 168 (full 7 days).", ge=1, le=168),
+        ] = 168,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Show a device-by-type raise-count matrix to quickly identify which
-        devices are generating the most anomalies and of what kind.
+        Return a device × anomaly-type raise-count matrix for rapid fabric-wide triage.
 
-        Use this tool when you want to answer questions like:
-          - "Which device is the most problematic in this blueprint?"
-          - "Do any devices show anomalies across multiple layers simultaneously
-            (suggesting a major incident)?"
-          - "Is the issue isolated to one device or spread across the fabric?"
-          - "What is the overall anomaly profile of this blueprint at a glance?"
+        Use this as a first-pass view to identify the most problematic devices and
+        anomaly types in a blueprint. Devices with anomalies spanning two or more OSI
+        layers simultaneously are flagged as cross_layer_fault — a strong indicator of a
+        major incident (e.g. a physical link failure cascading to BGP and MAC anomalies).
+        Follow up with correlate_anomaly_events to identify the probable root cause.
 
-        The matrix has one row per device and one column per anomaly type seen
-        in the window.  Cell values are raw raise counts (not de-duplicated).
-        Cells with zero raises are omitted from the per-device type map.
-
-        A ``summary`` section ranks devices by total raises and identifies
-        devices with cross-layer anomalies (anomalies at two or more distinct
-        OSI layers), which are a strong indicator of a major fault.
-
-        Parameters
-        ----------
-        blueprint_id  : Blueprint to query.
-        hours_back    : Look-back window (1–168).  Default 168 (full 7 days).
-        instance_name : Target a specific Apstra instance.
-
-        Data source: local SQLite anomaly store (anomaly_timeseries.db)
-        Updated: every 60 seconds
+        Returns: matrix (per-device row with total_raises, types dict of anomaly_type →
+        raise count, distinct_osi_layers, cross_layer_fault bool) sorted by total_raises
+        descending; summary (top device, cross_layer_devices list); all_types (sorted by
+        OSI layer). Data source: local SQLite anomaly store.
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
@@ -481,86 +430,50 @@ def register(mcp):
 
     @mcp.tool()
     async def correlate_anomaly_events(
-        blueprint_id: str,
-        hours_back: int = 24,
-        idle_gap_seconds: int = 60,
-        min_cluster_size: int = 2,
-        anomaly_type: str = None,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        hours_back: Annotated[
+            int,
+            Field(default=24, description="Look-back window (1–168 hours). Default 24.", ge=1, le=168),
+        ] = 24,
+        idle_gap_seconds: Annotated[
+            int,
+            Field(
+                default=60,
+                description=(
+                    "Gap in seconds between consecutive events that starts a new cluster. "
+                    "Increase to 120–300 for noisy environments; lower to 15–30 for precise "
+                    "incident separation. Default 60 s."
+                ),
+            ),
+        ] = 60,
+        min_cluster_size: Annotated[
+            int,
+            Field(default=2, description="Minimum raise events to include a cluster. Default 2; set to 1 to include singletons."),
+        ] = 2,
+        anomaly_type: Annotated[
+            str | None,
+            Field(default=None, description="Only return clusters containing at least one event of this anomaly type."),
+        ] = None,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Group anomaly raise events into temporal fault clusters and analyse the
-        likely OSI-layer cascade within each cluster.
+        Cluster temporally related anomaly raise events and identify the probable root-cause OSI layer.
 
-        Use this tool when you want to answer questions like:
-          - "Multiple anomaly types fired at roughly the same time — are they
-            all caused by the same underlying event?"
-          - "A link went down and now I'm seeing BGP and route anomalies —
-            what is the root cause and what is the cascade?"
-          - "Were there multiple distinct fault events in the last 24 hours,
-            or was it all one incident?"
-          - "I see cabling, BGP, and interface anomalies on different devices —
-            are these related?"
+        Use this during incident investigation when multiple anomaly types fire around the same
+        time and you want to know whether they share a common root cause. Groups raise events
+        into bursts separated by idle_gap_seconds, de-duplicates bilateral anomalies within
+        each cluster, tags each anomaly with its OSI layer (L1-physical through L6-telemetry),
+        identifies the lowest-layer anomaly as the root-cause candidate, and reports confidence
+        (high/medium/low) based on structural consistency.
 
-        How it works
-        ------------
-        1. Temporal clustering — all raise events are sorted by timestamp.
-           A new cluster is started whenever consecutive events are separated
-           by more than ``idle_gap_seconds``.  This is fabric-change detection:
-           it finds moments where new anomalies burst into the fabric,
-           regardless of what type or protocol they are.
-
-        2. Structural de-duplication within each cluster:
-           - Ghost rows (Apstra stores some anomalies twice) are removed.
-           - BGP bilateral pairs (each session appears on both endpoints) are
-             collapsed to one logical session.
-           - Cabling bilateral pairs (each cable mismatch appears on both
-             ends) are collapsed to one logical cable entry.
-
-        3. OSI-layer tagging — every logical anomaly is tagged with its layer:
-             L1-physical (cabling) → L2-link (interface, lag) →
-             L3-network (deployment, liveness, config) →
-             L4-routing (bgp, route) → L5-overlay (mac) → L6-telemetry (probe)
-
-        4. Root-cause scoring — the anomaly at the lowest OSI layer is
-           identified as the root-cause candidate.  Ties are broken by
-           structural centrality: an anomaly whose devices are referenced
-           by other anomalies in the cluster scores higher.  Confidence is
-           reported explicitly (high / medium / low) so you can judge whether
-           manual investigation is needed.
-
-        5. Causal chain — the ordered sequence of OSI layers present in the
-           cluster, showing how a lower-layer event cascaded upward.
-
-        Important caveats
-        -----------------
-        - Clustering is *temporal*, not causal.  Two anomalies in the same
-          cluster fired close together in time — they may or may not share a
-          root cause.  The tool flags uncertainty explicitly.
-        - Root-cause scoring is heuristic.  "High confidence" means the
-          evidence is consistent with a single root cause; it does not mean
-          the cause is definitively proven.
-        - The tool only has visibility into anomalies in the local store.
-          If an anomaly was cleared before backfill started it will not appear.
-
-        Parameters
-        ----------
-        blueprint_id       : Blueprint to query.
-        hours_back         : How far back to look (1–168).  Default 24 hours.
-        idle_gap_seconds   : Gap between consecutive events that starts a new
-                             cluster.  Default 60 s.  Increase to 120–300 for
-                             noisy environments; lower to 15–30 for precise
-                             incident separation.
-        min_cluster_size   : Minimum raw raises to include a cluster in the
-                             output.  Default 2 (suppresses isolated events).
-                             Set to 1 to see all events including singletons.
-        anomaly_type       : Optional filter — only show clusters that contain
-                             at least one anomaly of this type.
-        instance_name      : Target a specific Apstra instance.
-
-        Data source: local SQLite anomaly store (anomaly_timeseries.db)
-        Updated: every 60 seconds
+        Each cluster includes: cluster_id, started_at, ended_at, duration_s, event_count,
+        devices (list), anomaly_types (list), osi_layers (list), probable_root_cause_layer,
+        root_cause_confidence, causal_chain (ordered OSI layer sequence), and events (list).
+        Clusters returned newest-first. Data source: local SQLite anomaly store.
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
