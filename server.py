@@ -22,6 +22,7 @@ from tools import mtu_check as mtu_check_tool
 from tools import reference as reference_tool
 from tools import systems as systems_tool
 from tools import anomaly_timeline as anomaly_timeline_tool
+from tools import anomaly_analytics as anomaly_analytics_tool
 from tools import run_commands as run_commands_tool
 from tools import virtual_networks as virtual_networks_tool
 
@@ -66,6 +67,7 @@ mcp = FastMCP(
 
 anomaly_timeline_tool.register(mcp)
 anomalies_tool.register(mcp)
+anomaly_analytics_tool.register(mcp)
 bgp_tool.register(mcp)
 blueprints_tool.register(mcp)
 config_rendering_tool.register(mcp)

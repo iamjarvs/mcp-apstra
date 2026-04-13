@@ -231,13 +231,43 @@ class TestAnomalyStorePrune:
         assert all(e["timestamp"] >= "2026" for e in events)
         store.close()
 
-    def test_prune_removes_orphaned_anomaly(self):
+    def test_prune_preserves_last_event_for_active_anomaly(self):
+        """Persistent anomalies (only a synthetic_raise from far in the past) must
+        survive prune so they continue to appear in get_currently_active()."""
         store = make_store()
         aid = store.upsert_anomaly(BP, INST, BGP_A)
-        # Only old events
-        store.insert_event(aid, "2020-01-01T00:00:00Z", raised=True, actual=None, source="t")
+        # Single old event — simulates a persistent anomaly backfilled via synthetic_raise
+        store.insert_event(aid, "2020-01-01T00:00:00Z", raised=True, actual=None, source="synthetic_raise")
         store.prune()
-        # The anomaly row should be cleaned up too
+        # Anomaly must still be visible as active
+        active = store.get_currently_active(BP)
+        assert len(active) == 1
+        store.close()
+
+    def test_prune_removes_orphaned_anomaly_with_no_events(self):
+        """Anomalies that somehow have zero events (upsert without insert) are
+        still cleaned up by the orphan-delete step."""
+        store = make_store()
+        store.upsert_anomaly(BP, INST, BGP_A)
+        # Force-delete all events (simulates a race / manual cleanup)
+        store._con.execute("DELETE FROM events")
+        store._con.commit()
+        store.prune()
+        active = store.get_currently_active(BP)
+        assert len(active) == 0
+        store.close()
+
+    def test_prune_removes_only_extra_old_events_not_last(self):
+        """When multiple old events exist, all but the newest (MAX id) are pruned."""
+        store = make_store()
+        aid = store.upsert_anomaly(BP, INST, BGP_A)
+        store.insert_event(aid, "2020-01-01T00:00:00Z", raised=True,  actual=None, source="t")
+        store.insert_event(aid, "2020-01-02T00:00:00Z", raised=False, actual=None, source="t")
+        store.prune()
+        events = store.query_events(BP)
+        # Only the newest event (clear from day 2) survives; anomaly is NOT active
+        assert len(events) == 1
+        assert events[0]["raised"] is False
         active = store.get_currently_active(BP)
         assert len(active) == 0
         store.close()
@@ -583,7 +613,7 @@ class TestGetAnomalyEventsTool:
         reg_fn(StubMCP())
         ctx = make_ctx(store)
         result = await captured["get_anomaly_events"](
-            blueprint_id=BP, hours_back=48, ctx=ctx
+            blueprint_id=BP, hours_back=168, ctx=ctx
         )
         assert result["event_count"] >= 1
         assert result["events"][0]["anomaly_type"] == "bgp"

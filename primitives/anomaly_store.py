@@ -42,6 +42,9 @@ class AnomalyStore:
         self._con.row_factory = sqlite3.Row
         self._con.execute("PRAGMA journal_mode=WAL")
         self._con.execute("PRAGMA foreign_keys=ON")
+        # Recover any un-checkpointed WAL left by a previous unclean shutdown
+        # before attempting schema changes, which would otherwise raise a disk I/O error.
+        self._con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         self._init_schema()
         log.info("AnomalyStore opened: %s", self._path)
 
@@ -162,12 +165,29 @@ class AnomalyStore:
             return True
 
     def prune(self):
-        """Delete events and orphaned anomalies outside the rolling window."""
+        """Delete events outside the rolling window.
+
+        The most recent event for every anomaly is always preserved so that
+        currently-active (raised) state is never silently lost — even for
+        persistent anomalies whose only event pre-dates the window.
+        Anomalies that have no remaining events are then cleaned up.
+        """
         cutoff = (
             datetime.now(timezone.utc) - timedelta(days=WINDOW_DAYS)
         ).isoformat()
         with self._lock:
-            self._con.execute("DELETE FROM events WHERE timestamp < ?", (cutoff,))
+            # Keep the highest-id event per anomaly unconditionally so that
+            # persistent anomalies (raised once, never cleared) survive the
+            # rolling-window prune.  For active anomalies the heartbeat written
+            # during incremental polls will replace this over time.
+            self._con.execute(
+                """DELETE FROM events
+                   WHERE timestamp < ?
+                     AND id NOT IN (
+                         SELECT MAX(id) FROM events GROUP BY anomaly_id
+                     )""",
+                (cutoff,),
+            )
             self._con.execute(
                 "DELETE FROM anomalies "
                 "WHERE id NOT IN (SELECT DISTINCT anomaly_id FROM events)"
@@ -404,6 +424,227 @@ class AnomalyStore:
         """True once the initial backfill for this blueprint has completed."""
         state = self.get_poll_state(blueprint_id, instance_name)
         return state.get("backfill_complete", False)
+
+    # ── Analytics query methods ───────────────────────────────────────────────
+
+    def get_raises_in_window(
+        self,
+        blueprint_id: str,
+        instance_name: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        anomaly_type: str | None = None,
+    ) -> list[dict]:
+        """
+        Return all raise events in the given time window, oldest first.
+        Used by the temporal clustering and correlation tools.
+        """
+        where = ["a.blueprint_id = ?", "e.raised = 1"]
+        params: list = [blueprint_id]
+        if instance_name:
+            where.append("a.instance_name = ?")
+            params.append(instance_name)
+        if since:
+            where.append("e.timestamp >= ?")
+            params.append(since)
+        if until:
+            where.append("e.timestamp <= ?")
+            params.append(until)
+        if anomaly_type:
+            where.append("a.anomaly_type = ?")
+            params.append(anomaly_type)
+
+        rows = self._con.execute(
+            f"""SELECT
+                    e.id AS event_id, e.timestamp, e.actual_json, e.source,
+                    a.id AS anomaly_id, a.anomaly_type, a.device_hostname,
+                    a.role, a.identity_json, a.expected_json,
+                    a.first_detected, a.instance_name
+                FROM events e
+                JOIN anomalies a ON a.id = e.anomaly_id
+                WHERE {' AND '.join(where)}
+                ORDER BY e.timestamp ASC""",
+            params,
+        ).fetchall()
+
+        return [
+            {
+                "event_id":      r["event_id"],
+                "anomaly_id":    r["anomaly_id"],
+                "timestamp":     r["timestamp"],
+                "raised":        True,
+                "source":        r["source"],
+                "actual":        json.loads(r["actual_json"]) if r["actual_json"] else None,
+                "anomaly_type":  r["anomaly_type"],
+                "device":        r["device_hostname"],
+                "role":          r["role"],
+                "identity":      json.loads(r["identity_json"]),
+                "expected":      json.loads(r["expected_json"]) if r["expected_json"] else None,
+                "first_detected": r["first_detected"],
+                "instance":      r["instance_name"],
+            }
+            for r in rows
+        ]
+
+    def get_trend_buckets(
+        self,
+        blueprint_id: str,
+        anomaly_type: str,
+        since: str,
+        bucket_minutes: int = 60,
+        instance_name: str | None = None,
+    ) -> list[dict]:
+        """
+        Return raise and clear counts grouped into time buckets per device.
+        bucket_minutes must evenly divide 1440 (minutes per day).
+        """
+        where = ["a.blueprint_id = ?", "a.anomaly_type = ?", "e.timestamp >= ?"]
+        params: list = [blueprint_id, anomaly_type, since]
+        if instance_name:
+            where.append("a.instance_name = ?")
+            params.append(instance_name)
+
+        rows = self._con.execute(
+            f"""SELECT
+                    a.device_hostname,
+                    -- Truncate timestamp to bucket boundary using integer arithmetic
+                    -- on the epoch seconds via strftime
+                    strftime('%Y-%m-%dT%H:%M:%SZ',
+                        CAST(CAST(strftime('%s', e.timestamp) AS INTEGER)
+                             / ({bucket_minutes} * 60)
+                             * ({bucket_minutes} * 60) AS INTEGER),
+                        'unixepoch'
+                    ) AS bucket,
+                    SUM(CASE WHEN e.raised=1 THEN 1 ELSE 0 END) AS raises,
+                    SUM(CASE WHEN e.raised=0 THEN 1 ELSE 0 END) AS clears
+                FROM events e
+                JOIN anomalies a ON a.id = e.anomaly_id
+                WHERE {' AND '.join(where)}
+                GROUP BY a.device_hostname, bucket
+                ORDER BY a.device_hostname, bucket""",
+            params,
+        ).fetchall()
+
+        return [
+            {
+                "device":  r["device_hostname"],
+                "bucket":  r["bucket"],
+                "raises":  r["raises"],
+                "clears":  r["clears"],
+            }
+            for r in rows
+        ]
+
+    def get_fault_episodes(
+        self,
+        blueprint_id: str,
+        instance_name: str | None = None,
+        anomaly_type: str | None = None,
+        since: str | None = None,
+    ) -> list[dict]:
+        """
+        Return raise events paired with their immediately following clear event
+        (gaps-and-islands).  Raises without a subsequent clear are included
+        with ``cleared_at=None`` (open episodes).
+
+        Used by the fault-duration tool.
+        """
+        where = ["a.blueprint_id = ?"]
+        params: list = [blueprint_id]
+        if instance_name:
+            where.append("a.instance_name = ?")
+            params.append(instance_name)
+        if anomaly_type:
+            where.append("a.anomaly_type = ?")
+            params.append(anomaly_type)
+        if since:
+            where.append("raise_ev.timestamp >= ?")
+            params.append(since)
+
+        rows = self._con.execute(
+            f"""SELECT
+                    a.id AS anomaly_id,
+                    a.anomaly_type,
+                    a.device_hostname,
+                    a.role,
+                    a.identity_json,
+                    a.expected_json,
+                    a.first_detected,
+                    a.instance_name,
+                    raise_ev.id         AS raise_event_id,
+                    raise_ev.timestamp  AS raised_at,
+                    raise_ev.actual_json AS raise_actual,
+                    (
+                        SELECT clear_ev.timestamp
+                        FROM events clear_ev
+                        WHERE clear_ev.anomaly_id = a.id
+                          AND clear_ev.raised = 0
+                          AND clear_ev.timestamp > raise_ev.timestamp
+                        ORDER BY clear_ev.timestamp ASC
+                        LIMIT 1
+                    ) AS cleared_at
+                FROM events raise_ev
+                JOIN anomalies a ON a.id = raise_ev.anomaly_id
+                WHERE raise_ev.raised = 1
+                  AND {' AND '.join(where)}
+                ORDER BY a.anomaly_type, a.device_hostname, raise_ev.timestamp""",
+            params,
+        ).fetchall()
+
+        return [
+            {
+                "anomaly_id":    r["anomaly_id"],
+                "anomaly_type":  r["anomaly_type"],
+                "device":        r["device_hostname"],
+                "role":          r["role"],
+                "identity":      json.loads(r["identity_json"]),
+                "expected":      json.loads(r["expected_json"]) if r["expected_json"] else None,
+                "first_detected": r["first_detected"],
+                "instance":      r["instance_name"],
+                "raised_at":     r["raised_at"],
+                "cleared_at":    r["cleared_at"],
+                "actual_at_raise": json.loads(r["raise_actual"]) if r["raise_actual"] else None,
+            }
+            for r in rows
+        ]
+
+    def get_device_type_matrix(
+        self,
+        blueprint_id: str,
+        since: str,
+        instance_name: str | None = None,
+    ) -> list[dict]:
+        """
+        Return raise counts per (device, anomaly_type) combination.
+        Used to build the device-anomaly heatmap.
+        """
+        where = ["a.blueprint_id = ?", "e.raised = 1", "e.timestamp >= ?"]
+        params: list = [blueprint_id, since]
+        if instance_name:
+            where.append("a.instance_name = ?")
+            params.append(instance_name)
+
+        rows = self._con.execute(
+            f"""SELECT
+                    a.device_hostname,
+                    a.anomaly_type,
+                    COUNT(*) AS raise_count
+                FROM events e
+                JOIN anomalies a ON a.id = e.anomaly_id
+                WHERE {' AND '.join(where)}
+                GROUP BY a.device_hostname, a.anomaly_type
+                ORDER BY a.device_hostname, a.anomaly_type""",
+            params,
+        ).fetchall()
+
+        return [
+            {
+                "device":        r["device_hostname"],
+                "anomaly_type":  r["anomaly_type"],
+                "raise_count":   r["raise_count"],
+            }
+            for r in rows
+        ]
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
