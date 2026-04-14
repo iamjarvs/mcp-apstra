@@ -8,6 +8,11 @@ from primitives import live_data_client
 # Status strings that mean "still running — keep polling".
 _RUNNING_STATUSES = {"inprogress", "in_progress", "in progress", "pending", "queued", "running"}
 
+# Retry configuration for the initial task-creation (submit) calls.
+# On failure the helper retries up to this many times with exponential backoff.
+_SUBMIT_MAX_RETRIES = 3
+_SUBMIT_RETRY_BASE_DELAY = 1.0  # seconds; doubles per attempt
+
 # Cypher query to retrieve all hardware system_ids for switches in a blueprint.
 # Returns only onboarded systems (system_id is not null/empty).
 _SYSTEMS_QUERY = """
@@ -23,6 +28,31 @@ ORDER BY sw.label
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+async def _submit_with_retry(submit_fn, skip_codes=()):
+    """
+    Calls ``submit_fn()`` (a zero-arg async callable) and retries up to
+    ``_SUBMIT_MAX_RETRIES`` times if it raises.
+
+    HTTP status codes in ``skip_codes`` are re-raised immediately without
+    retrying (used for 404/405 version-detection fall-through).
+
+    Backoff doubles each attempt: 1 s, 2 s, 4 s.
+    """
+    last_exc = None
+    for attempt in range(_SUBMIT_MAX_RETRIES + 1):
+        try:
+            return await submit_fn()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in skip_codes:
+                raise
+            last_exc = exc
+        except Exception as exc:
+            last_exc = exc
+        if attempt < _SUBMIT_MAX_RETRIES:
+            await asyncio.sleep(_SUBMIT_RETRY_BASE_DELAY * (2 ** attempt))
+    raise last_exc
+
 
 async def _poll_until_done(session, request_id: str, timeout_seconds: int) -> dict:
     """
@@ -69,8 +99,10 @@ async def _run_single_command(
     Runs one command via the single-command endpoint, polls to completion,
     cleans up, and returns a normalised result dict.
     """
-    request_id = await live_data_client.submit_fetchcmd_single(
-        session, system_id, command_text, output_format
+    request_id = await _submit_with_retry(
+        lambda: live_data_client.submit_fetchcmd_single(
+            session, system_id, command_text, output_format
+        )
     )
     poll_result = await _poll_until_done(session, request_id, timeout_seconds)
     await _safe_delete(session, request_id)
@@ -108,9 +140,14 @@ async def _run_on_system(
     try:
         # -- Attempt batch endpoint first ------------------------------------
         # Returns {"command text": "request_id", ...} — one uuid per command.
+        # Retries up to _SUBMIT_MAX_RETRIES times on transient failures.
+        # 404/405 are passed through immediately so the fallback below fires.
         try:
-            request_ids_map = await live_data_client.submit_fetchcmd_multiple(
-                session, system_id, commands, output_format
+            request_ids_map = await _submit_with_retry(
+                lambda: live_data_client.submit_fetchcmd_multiple(
+                    session, system_id, commands, output_format
+                ),
+                skip_codes=(404, 405),
             )
             endpoint = "multiple"
         except httpx.HTTPStatusError as exc:

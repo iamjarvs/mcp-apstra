@@ -16,6 +16,7 @@ from handlers.run_commands import (
     _run_on_system,
     handle_run_commands,
     _select_sessions,
+    _submit_with_retry,
 )
 
 
@@ -596,3 +597,224 @@ class TestSelectSessions:
         sessions = [make_session("a")]
         with pytest.raises(ValueError, match="No instance named 'z'"):
             _select_sessions(sessions, "z")
+
+
+# ---------------------------------------------------------------------------
+# _submit_with_retry
+# ---------------------------------------------------------------------------
+
+class TestSubmitWithRetry:
+    async def test_succeeds_on_first_attempt(self):
+        call_count = 0
+
+        async def fn():
+            nonlocal call_count
+            call_count += 1
+            return "req-1"
+
+        with patch("handlers.run_commands.asyncio.sleep", new_callable=AsyncMock):
+            result = await _submit_with_retry(fn)
+
+        assert result == "req-1"
+        assert call_count == 1
+
+    async def test_retries_on_generic_exception(self):
+        call_count = 0
+
+        async def fn():
+            nonlocal call_count
+            call_count += 1
+            if call_count < 3:
+                raise Exception("transient error")
+            return "req-ok"
+
+        with patch("handlers.run_commands.asyncio.sleep", new_callable=AsyncMock):
+            result = await _submit_with_retry(fn)
+
+        assert result == "req-ok"
+        assert call_count == 3
+
+    async def test_raises_after_max_retries_exceeded(self):
+        async def fn():
+            raise Exception("persistent error")
+
+        with patch("handlers.run_commands.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            with pytest.raises(Exception, match="persistent error"):
+                await _submit_with_retry(fn)
+
+        # 3 retries → 3 sleep calls
+        assert mock_sleep.call_count == 3
+
+    async def test_skip_codes_reraise_immediately_without_retry(self):
+        call_count = 0
+
+        async def fn():
+            nonlocal call_count
+            call_count += 1
+            raise make_http_error(404)
+
+        with patch("handlers.run_commands.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            with pytest.raises(httpx.HTTPStatusError):
+                await _submit_with_retry(fn, skip_codes=(404, 405))
+
+        assert call_count == 1      # no retries
+        mock_sleep.assert_not_called()
+
+    async def test_retries_non_skip_http_errors(self):
+        """An HTTP 500 should be retried (unlike 404/405)."""
+        call_count = 0
+
+        async def fn():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise make_http_error(500)
+            return "req-after-500"
+
+        with patch("handlers.run_commands.asyncio.sleep", new_callable=AsyncMock):
+            result = await _submit_with_retry(fn, skip_codes=(404, 405))
+
+        assert result == "req-after-500"
+        assert call_count == 2
+
+    async def test_backoff_delays_double_each_attempt(self):
+        """Sleep durations should follow 1 s, 2 s, 4 s pattern."""
+        async def fn():
+            raise Exception("always fails")
+
+        sleep_calls = []
+
+        async def fake_sleep(delay):
+            sleep_calls.append(delay)
+
+        with patch("handlers.run_commands.asyncio.sleep", side_effect=fake_sleep):
+            with pytest.raises(Exception):
+                await _submit_with_retry(fn)
+
+        assert sleep_calls == [1.0, 2.0, 4.0]
+
+
+# ---------------------------------------------------------------------------
+# _run_single_command — retry integration
+# ---------------------------------------------------------------------------
+
+class TestRunSingleCommandRetry:
+    async def test_retries_submit_on_failure_then_succeeds(self):
+        session = make_session()
+        submit_calls = 0
+
+        async def mock_submit(session, system_id, cmd, fmt):
+            nonlocal submit_calls
+            submit_calls += 1
+            if submit_calls < 3:
+                raise Exception("submit failed")
+            return "req-retry-ok"
+
+        with patch("handlers.run_commands.live_data_client.submit_fetchcmd_single",
+                   side_effect=mock_submit):
+            with patch("handlers.run_commands.live_data_client.poll_fetchcmd",
+                       new_callable=AsyncMock,
+                       return_value={"result": "success", "output": "v21"}):
+                with patch("handlers.run_commands.live_data_client.delete_fetchcmd",
+                           new_callable=AsyncMock):
+                    with patch("handlers.run_commands.asyncio.sleep",
+                               new_callable=AsyncMock):
+                        result = await _run_single_command(
+                            session, "SYS001", "show version", 30, "json"
+                        )
+
+        assert result["result"] == "success"
+        assert submit_calls == 3
+
+    async def test_gives_up_after_max_retries(self):
+        """After 4 total attempts (1 + 3 retries) the error bubbles up to _run_on_system."""
+        session = make_session()
+
+        async def always_fail(session, system_id, cmd, fmt):
+            raise Exception("submit never works")
+
+        with patch("handlers.run_commands.live_data_client.submit_fetchcmd_single",
+                   side_effect=always_fail):
+            with patch("handlers.run_commands.asyncio.sleep", new_callable=AsyncMock):
+                with pytest.raises(Exception, match="submit never works"):
+                    await _run_single_command(
+                        session, "SYS001", "show version", 30, "json"
+                    )
+
+
+# ---------------------------------------------------------------------------
+# _run_on_system — retry integration for batch endpoint
+# ---------------------------------------------------------------------------
+
+class TestRunOnSystemRetry:
+    async def test_retries_multiple_submit_on_transient_error(self):
+        session = make_session()
+        submit_calls = 0
+
+        async def mock_multiple(session, system_id, commands, fmt):
+            nonlocal submit_calls
+            submit_calls += 1
+            if submit_calls < 2:
+                raise Exception("transient network error")
+            return {"show version": "req-m1"}
+
+        with patch("handlers.run_commands.live_data_client.submit_fetchcmd_multiple",
+                   side_effect=mock_multiple):
+            with patch("handlers.run_commands._poll_until_done",
+                       new_callable=AsyncMock,
+                       return_value={"result": "success", "output": "ok"}):
+                with patch("handlers.run_commands._safe_delete", new_callable=AsyncMock):
+                    with patch("handlers.run_commands.asyncio.sleep",
+                               new_callable=AsyncMock):
+                        result = await _run_on_system(
+                            session, "SYS001", "Leaf1", ["show version"], 30, "json"
+                        )
+
+        assert result["status"] == "success"
+        assert result["endpoint"] == "multiple"
+        assert submit_calls == 2
+
+    async def test_404_not_retried_falls_through_to_single(self):
+        """A 404 from the batch endpoint must trigger the single-command fallback
+        without any retry attempts."""
+        session = make_session()
+        submit_calls = 0
+
+        async def mock_multiple(session, system_id, commands, fmt):
+            nonlocal submit_calls
+            submit_calls += 1
+            raise make_http_error(404)
+
+        with patch("handlers.run_commands.live_data_client.submit_fetchcmd_multiple",
+                   side_effect=mock_multiple):
+            with patch("handlers.run_commands._run_single_command",
+                       new_callable=AsyncMock,
+                       return_value={"command": "show version", "result": "success",
+                                     "output": "ok", "error": None}):
+                with patch("handlers.run_commands.asyncio.sleep",
+                           new_callable=AsyncMock) as mock_sleep:
+                    result = await _run_on_system(
+                        session, "SYS001", "Leaf1", ["show version"], 30, "json"
+                    )
+
+        assert result["endpoint"] == "single"
+        assert submit_calls == 1   # no retries for 404
+        mock_sleep.assert_not_called()
+
+    async def test_405_not_retried_falls_through_to_single(self):
+        session = make_session()
+
+        with patch("handlers.run_commands.live_data_client.submit_fetchcmd_multiple",
+                   new_callable=AsyncMock, side_effect=make_http_error(405)):
+            with patch("handlers.run_commands._run_single_command",
+                       new_callable=AsyncMock,
+                       return_value={"command": "show version", "result": "success",
+                                     "output": "ok", "error": None}):
+                with patch("handlers.run_commands.asyncio.sleep",
+                           new_callable=AsyncMock) as mock_sleep:
+                    result = await _run_on_system(
+                        session, "SYS001", "Leaf1", ["show version"], 30, "json"
+                    )
+
+        assert result["endpoint"] == "single"
+        mock_sleep.assert_not_called()

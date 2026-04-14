@@ -65,9 +65,9 @@ def register(mcp):
             system_id:       Optional. Hardware chassis serial of the target
                              switch. If omitted, commands run on all onboarded
                              switches in the blueprint.
-            output_format:   "text" (default) for raw CLI output string, or
-                             "json" for structured Junos JSON output (only works
-                             for commands that support display json).
+            output_format:   "json" (default) for structured Junos JSON output.
+                             Use "text" for raw CLI output or for commands that
+                             do not support display json.
             timeout_seconds: How long to wait for each system's commands to
                              complete before returning a "timeout" status.
                              Default 30 seconds. Increase for slow commands such
