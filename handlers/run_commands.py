@@ -63,12 +63,25 @@ async def _poll_until_done(session, request_id: str, timeout_seconds: int) -> di
     {"result": "success", "output": "..."}. The older "status" field is
     also checked for compatibility.
 
+    A 404 response during polling means the job record is not yet visible on
+    the server (the task was accepted but not yet persisted).  It is treated
+    the same as an in-progress status so the poll loop retries transparently.
+
     Returns the last response dict.  If the timeout is reached before the job
     completes, returns {"result": "timeout", "request_id": request_id}.
     """
     deadline = time.monotonic() + timeout_seconds
     while True:
-        response = await live_data_client.poll_fetchcmd(session, request_id)
+        try:
+            response = await live_data_client.poll_fetchcmd(session, request_id)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                # Job not yet visible — treat as pending and keep polling.
+                if time.monotonic() >= deadline:
+                    return {"result": "timeout", "request_id": request_id}
+                await asyncio.sleep(1.5)
+                continue
+            raise
         raw_status = response.get("result", response.get("status", ""))
         if raw_status.lower() not in _RUNNING_STATUSES:
             return response

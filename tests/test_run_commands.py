@@ -201,6 +201,55 @@ class TestPollUntilDone:
         assert result["status"] == "done"
         assert mock_poll.call_count == 1
 
+    async def test_poll_404_treated_as_pending_then_succeeds(self):
+        """404 during polling means job not yet visible — should keep retrying."""
+        session = make_session()
+        poll_404 = make_http_error(404)
+
+        async def poll_side_effect(session, request_id):
+            if poll_side_effect.calls < 2:
+                poll_side_effect.calls += 1
+                raise poll_404
+            return {"result": "success", "output": "done"}
+
+        poll_side_effect.calls = 0
+
+        with patch("handlers.run_commands.live_data_client.poll_fetchcmd",
+                   side_effect=poll_side_effect):
+            with patch("handlers.run_commands.asyncio.sleep", new_callable=AsyncMock):
+                result = await _poll_until_done(session, "req-1", timeout_seconds=30)
+
+        assert result["result"] == "success"
+
+    async def test_poll_404_timeout_returns_timeout_dict(self):
+        """If every poll returns 404 and we hit the deadline, return timeout."""
+        session = make_session()
+
+        async def always_404(session, request_id):
+            raise make_http_error(404)
+
+        with patch("handlers.run_commands.live_data_client.poll_fetchcmd",
+                   side_effect=always_404):
+            with patch("handlers.run_commands.asyncio.sleep", new_callable=AsyncMock):
+                with patch("handlers.run_commands.time.monotonic",
+                           side_effect=[0.0, 100.0]):
+                    result = await _poll_until_done(session, "req-1", timeout_seconds=5)
+
+        assert result["result"] == "timeout"
+        assert result["request_id"] == "req-1"
+
+    async def test_non_404_http_error_during_poll_raises(self):
+        """A 500 during polling should propagate, not be silently swallowed."""
+        session = make_session()
+
+        async def always_500(session, request_id):
+            raise make_http_error(500)
+
+        with patch("handlers.run_commands.live_data_client.poll_fetchcmd",
+                   side_effect=always_500):
+            with pytest.raises(httpx.HTTPStatusError):
+                await _poll_until_done(session, "req-1", timeout_seconds=30)
+
 
 # ---------------------------------------------------------------------------
 # _run_single_command
