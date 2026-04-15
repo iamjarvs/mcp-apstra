@@ -43,6 +43,10 @@ async def resolve_blueprints(sessions, blueprint_ref: str | None) -> list[dict]:
     if not ref or ref == "all":
         return all_bps
 
+    if not all_bps:
+        # Could not reach any instance — treat as literal ID (best-effort fallback)
+        return [{"id": blueprint_ref, "label": blueprint_ref, "instance_name": None}]
+
     matched = [bp for bp in all_bps if ref in bp["label"].lower()]
     return matched
 

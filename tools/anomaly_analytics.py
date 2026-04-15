@@ -5,10 +5,18 @@ from typing import Annotated
 from fastmcp import Context
 from pydantic import Field
 
+from handlers.blueprints import resolve_blueprints
 from primitives.anomaly_clustering import (
     OSI_LAYER,
     cluster_raises,
     enrich_cluster,
+)
+
+_BP_DESC = (
+    "Apstra blueprint ID, partial label, or null. "
+    "Pass null or 'all' for every blueprint. "
+    "Pass a partial name (e.g. 'DC1') to match by label. "
+    "Pass a full UUID for a specific blueprint."
 )
 
 
@@ -18,11 +26,11 @@ def register(mcp):
 
     @mcp.tool()
     async def get_anomaly_trend(
-        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         anomaly_type: Annotated[
             str,
             "Anomaly type to trend (e.g. 'bgp', 'mac', 'interface', 'cabling', 'route', 'lag').",
-        ],
+        ] = None,
         hours_back: Annotated[
             int,
             Field(default=24, description="Look-back window (1–168 hours). Default 24.", ge=1, le=168),
@@ -50,6 +58,21 @@ def register(mcp):
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
             return {"error": "anomaly_store not available"}
+
+        blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await get_anomaly_trend(
+                    blueprint_id=bp["id"], anomaly_type=anomaly_type,
+                    hours_back=hours_back, instance_name=instance_name, ctx=ctx,
+                )
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
+        blueprint_id = blu_list[0]["id"]
 
         hours_back = max(1, min(hours_back, 168))
         since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
@@ -115,11 +138,11 @@ def register(mcp):
 
     @mcp.tool()
     async def get_correlated_faults(
-        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         anomaly_type: Annotated[
             str,
             "Anomaly type to de-duplicate ('bgp', 'cabling', 'interface', 'mac', etc.).",
-        ],
+        ] = None,
         hours_back: Annotated[
             int,
             Field(default=168, description="Look-back window (1–168 hours). Default 168 (full 7 days).", ge=1, le=168),
@@ -147,6 +170,21 @@ def register(mcp):
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
             return {"error": "anomaly_store not available"}
+
+        blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await get_correlated_faults(
+                    blueprint_id=bp["id"], anomaly_type=anomaly_type,
+                    hours_back=hours_back, instance_name=instance_name, ctx=ctx,
+                )
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
+        blueprint_id = blu_list[0]["id"]
 
         hours_back = max(1, min(hours_back, 168))
         since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
@@ -214,7 +252,7 @@ def register(mcp):
 
     @mcp.tool()
     async def get_fault_durations(
-        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         anomaly_type: Annotated[
             str | None,
             Field(default=None, description="Filter by anomaly type (e.g. 'bgp', 'interface'). Omit for all types."),
@@ -244,6 +282,21 @@ def register(mcp):
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
             return {"error": "anomaly_store not available"}
+
+        blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await get_fault_durations(
+                    blueprint_id=bp["id"], anomaly_type=anomaly_type,
+                    hours_back=hours_back, instance_name=instance_name, ctx=ctx,
+                )
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
+        blueprint_id = blu_list[0]["id"]
 
         hours_back = max(1, min(hours_back, 168))
         since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
@@ -327,7 +380,7 @@ def register(mcp):
 
     @mcp.tool()
     async def get_device_anomaly_heatmap(
-        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         hours_back: Annotated[
             int,
             Field(default=168, description="Look-back window (1–168 hours). Default 168 (full 7 days).", ge=1, le=168),
@@ -355,6 +408,21 @@ def register(mcp):
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
             return {"error": "anomaly_store not available"}
+
+        blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await get_device_anomaly_heatmap(
+                    blueprint_id=bp["id"], hours_back=hours_back,
+                    instance_name=instance_name, ctx=ctx,
+                )
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
+        blueprint_id = blu_list[0]["id"]
 
         hours_back = max(1, min(hours_back, 168))
         since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
@@ -430,7 +498,7 @@ def register(mcp):
 
     @mcp.tool()
     async def correlate_anomaly_events(
-        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         hours_back: Annotated[
             int,
             Field(default=24, description="Look-back window (1–168 hours). Default 24.", ge=1, le=168),
@@ -478,6 +546,22 @@ def register(mcp):
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
             return {"error": "anomaly_store not available"}
+
+        blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await correlate_anomaly_events(
+                    blueprint_id=bp["id"], hours_back=hours_back,
+                    idle_gap_seconds=idle_gap_seconds, min_cluster_size=min_cluster_size,
+                    anomaly_type=anomaly_type, instance_name=instance_name, ctx=ctx,
+                )
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
+        blueprint_id = blu_list[0]["id"]
 
         hours_back        = max(1, min(hours_back, 168))
         idle_gap_seconds  = max(5, min(idle_gap_seconds, 3600))

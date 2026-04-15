@@ -4,11 +4,20 @@ from typing import Annotated, Literal
 from fastmcp import Context
 from pydantic import Field
 
+from handlers.blueprints import resolve_blueprints
+
+_BP_DESC = (
+    "Apstra blueprint ID, partial label, or null. "
+    "Pass null or 'all' for every blueprint. "
+    "Pass a partial name (e.g. 'DC1') to match by label. "
+    "Pass a full UUID for a specific blueprint."
+)
+
 
 def register(mcp):
     @mcp.tool()
     async def get_anomaly_events(
-        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         hours_back: Annotated[
             int,
             Field(default=24, description="How far back to look (1–168 hours). Default 24.", ge=1, le=168),
@@ -32,7 +41,7 @@ def register(mcp):
         ctx: Context = None,
     ) -> dict:
         """
-        Query the local anomaly time-series store for raise and clear events.
+        Query the local anomaly time-series store for raise and clear events across one or all blueprints.
 
         Use this to see exactly when anomalies appeared and were resolved, trace the
         sequence of events during an incident, or verify that a remediation actually
@@ -41,20 +50,35 @@ def register(mcp):
         Filter by anomaly_type and device to narrow to a specific fault. Set raised_only=True
         to see only fault-onset events without the corresponding clears.
 
+        Pass blueprint_id=null to query all blueprints at once.
+
         Each event includes: timestamp, raised (true = new anomaly, false = anomaly cleared),
-        anomaly_type (bgp/cabling/interface/route/lag/mac/probe/deployment/liveness/config),
-        device (hostname), expected (Apstra's intent), actual (observed state), identity
-        (dict uniquely identifying this anomaly instance), first_detected, source.
-        Returns newest-first, up to 500 events. Data source: local SQLite store.
+        anomaly_type, device (hostname), expected (Apstra's intent), actual (observed state),
+        identity (dict uniquely identifying this anomaly instance), first_detected, source.
+        Returns newest-first, up to 500 events per blueprint. Data source: local SQLite store.
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
             return {"error": "anomaly_store not available — server may still be starting up"}
 
+        blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await get_anomaly_events(
+                    blueprint_id=bp["id"], hours_back=hours_back, anomaly_type=anomaly_type,
+                    device=device, raised_only=raised_only, instance_name=instance_name, ctx=ctx,
+                )
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
+
+        blueprint_id = blu_list[0]["id"]
         hours_back = max(1, min(hours_back, 168))
-        since = (
-            datetime.now(timezone.utc) - timedelta(hours=hours_back)
-        ).isoformat()
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
 
         events = store.query_events(
             blueprint_id=blueprint_id,
@@ -67,8 +91,9 @@ def register(mcp):
         )
 
         return {
-            "blueprint_id": blueprint_id,
-            "hours_back":   hours_back,
+            "blueprint_id":  blueprint_id,
+            "blueprint_label": blu_list[0]["label"],
+            "hours_back":    hours_back,
             "filters": {
                 "anomaly_type": anomaly_type,
                 "device":       device,
@@ -85,7 +110,7 @@ def register(mcp):
 
     @mcp.tool()
     async def get_anomaly_summary(
-        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         time_window: Annotated[
             Literal["5min", "30min", "1hr", "12hr", "24hr", "7d"],
             Field(
@@ -124,6 +149,22 @@ def register(mcp):
         if store is None:
             return {"error": "anomaly_store not available"}
 
+        blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await get_anomaly_summary(
+                    blueprint_id=bp["id"], time_window=time_window,
+                    instance_name=instance_name, ctx=ctx,
+                )
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
+
+        blueprint_id = blu_list[0]["id"]
         _window_to_delta = {
             "5min":  timedelta(minutes=5),
             "30min": timedelta(minutes=30),
@@ -150,9 +191,10 @@ def register(mcp):
             })
 
         base = {
-            "blueprint_id": blueprint_id,
-            "time_window":  time_window,
-            "since":        since_iso,
+            "blueprint_id":    blueprint_id,
+            "blueprint_label": blu_list[0]["label"],
+            "time_window":     time_window,
+            "since":           since_iso,
         }
 
         if len(summaries) == 1:
@@ -165,7 +207,7 @@ def register(mcp):
 
     @mcp.tool()
     async def get_active_anomalies_from_store(
-        blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         anomaly_type: Annotated[
             str | None,
             Field(default=None, description="Filter by anomaly type (e.g. 'bgp', 'cabling', 'interface')."),
@@ -184,6 +226,8 @@ def register(mcp):
         or when API latency is a concern. An anomaly is active when its most recent store
         event is a raise with no subsequent clear.
 
+        Pass blueprint_id=null to query all blueprints at once.
+
         Each anomaly includes: anomaly_type, device, expected, actual, identity (unique key),
         first_detected, last_event_at.
         Data source: local SQLite store (updated every 60 s by background poller).
@@ -192,6 +236,23 @@ def register(mcp):
         if store is None:
             return {"error": "anomaly_store not available"}
 
+        blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await get_active_anomalies_from_store(
+                    blueprint_id=bp["id"], anomaly_type=anomaly_type,
+                    instance_name=instance_name, ctx=ctx,
+                )
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            total_active = sum(r.get("active_count", 0) for r in results)
+            return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "total_active": total_active, "results": results}
+
+        blueprint_id = blu_list[0]["id"]
         active = store.get_currently_active(blueprint_id, instance_name)
 
         if anomaly_type:
@@ -201,8 +262,9 @@ def register(mcp):
         by_type = dict(Counter(a["anomaly_type"] for a in active))
 
         return {
-            "blueprint_id":  blueprint_id,
-            "active_count":  len(active),
+            "blueprint_id":    blueprint_id,
+            "blueprint_label": blu_list[0]["label"],
+            "active_count":    len(active),
             "by_type":       by_type,
             "anomalies":     active,
             "_meta": {
@@ -213,11 +275,11 @@ def register(mcp):
 
     @mcp.tool()
     async def get_device_anomaly_history(
-        blueprint_id: Annotated[str, "Apstra blueprint ID. Use get_blueprints to discover valid values."],
+        blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         device: Annotated[
             str,
             "Device hostname exactly as shown in Apstra (e.g. 'Leaf1', 'Spine2'). Required.",
-        ],
+        ] = None,
         from_time: Annotated[
             str | None,
             Field(
@@ -298,6 +360,24 @@ def register(mcp):
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
             return {"error": "anomaly_store not available"}
+
+        blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await get_device_anomaly_history(
+                    blueprint_id=bp["id"], device=device, from_time=from_time,
+                    to_time=to_time, time_window=time_window, anomaly_type=anomaly_type,
+                    instance_name=instance_name, ctx=ctx,
+                )
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
+
+        blueprint_id = blu_list[0]["id"]
 
         _window_to_delta = {
             "5min":  timedelta(minutes=5),
@@ -381,13 +461,14 @@ def register(mcp):
             anomalies.append(entry)
 
         return {
-            "blueprint_id":   blueprint_id,
-            "device":         device,
-            "time_window":    window_label,
-            "since":          since_iso,
-            "until":          until_iso,
-            "anomaly_count":  len(anomalies),
-            "total_events":   len(events),
+            "blueprint_id":    blueprint_id,
+            "blueprint_label": blu_list[0]["label"],
+            "device":          device,
+            "time_window":     window_label,
+            "since":           since_iso,
+            "until":           until_iso,
+            "anomaly_count":   len(anomalies),
+            "total_events":    len(events),
             "anomalies":      anomalies,
             "_meta": {
                 "data_source": "local_anomaly_store",

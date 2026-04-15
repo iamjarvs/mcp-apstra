@@ -5,6 +5,7 @@ from pydantic import Field
 
 from handlers.systems import handle_get_systems
 from handlers.system_context import handle_get_system_context
+from handlers.blueprints import resolve_blueprints
 
 
 def register(mcp):
@@ -12,9 +13,17 @@ def register(mcp):
     @mcp.tool()
     async def get_systems(
         blueprint_id: Annotated[
-            str,
-            "Apstra blueprint ID. Use get_blueprints to discover valid values.",
-        ],
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    "Apstra blueprint ID, partial label, or null. "
+                    "Pass null or 'all' for every blueprint. "
+                    "Pass a partial name (e.g. 'DC1') to match by label. "
+                    "Pass a full UUID for a specific blueprint."
+                ),
+            ),
+        ] = None,
         instance_name: Annotated[
             str | None,
             Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
@@ -22,7 +31,7 @@ def register(mcp):
         ctx: Context = None,
     ) -> dict:
         """
-        Return all switch systems (leaf, spine, access, superspine) in a blueprint.
+        Return all switch systems (leaf, spine, access, superspine) in one or all blueprints.
 
         Call this to discover system_id values (hardware chassis serials) required by
         get_interface_list, get_interface_counters, get_rendered_config,
@@ -30,18 +39,38 @@ def register(mcp):
         Always use the system_id field (hardware serial, e.g. "5254002D005F") for those
         tools — not the id field (graph node ID).
 
+        Pass blueprint_id=null to list every device across all blueprints.
+        Pass a partial name such as "DC1" to match any blueprint whose label contains that string.
+
         Each system includes: id (graph node ID), label (hostname as shown in Apstra UI),
         role (leaf/spine/access/superspine), system_id (hardware chassis serial),
         hostname, deploy_mode (deploy/drain), management_level, external (bool),
         group_label.
         Data source: graph database (auto-rebuilt when blueprint version changes).
         """
-        return await handle_get_systems(
-            ctx.lifespan_context["sessions"],
-            ctx.lifespan_context["graph_registry"],
-            blueprint_id,
-            instance_name,
-        )
+        sessions = ctx.lifespan_context["sessions"]
+        registry = ctx.lifespan_context["graph_registry"]
+        blu_list = await resolve_blueprints(sessions, blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await handle_get_systems(sessions, registry, bp["id"], instance_name)
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            return {
+                "blueprint_count": len(results),
+                "blueprint_ref": blueprint_id,
+                "total_count": sum(r.get("count", 0) for r in results),
+                "results": results,
+            }
+
+        bp = blu_list[0]
+        r = await handle_get_systems(sessions, registry, bp["id"], instance_name)
+        r["blueprint_label"] = bp["label"]
+        return r
 
     @mcp.tool()
     async def get_system_config_context(

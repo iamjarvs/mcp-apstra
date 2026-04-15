@@ -4,6 +4,7 @@ from fastmcp import Context
 from pydantic import Field
 
 from handlers.mtu_check import handle_get_fabric_mtu_check
+from handlers.blueprints import resolve_blueprints
 
 
 def register(mcp):
@@ -11,9 +12,17 @@ def register(mcp):
     @mcp.tool()
     async def get_fabric_mtu_check(
         blueprint_id: Annotated[
-            str,
-            "Apstra blueprint ID. Use get_blueprints to discover valid values.",
-        ],
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    "Apstra blueprint ID, partial label, or null. "
+                    "Pass null or 'all' for every blueprint. "
+                    "Pass a partial name (e.g. 'DC1') to match by label. "
+                    "Pass a full UUID for a specific blueprint."
+                ),
+            ),
+        ] = None,
         focus_systems: Annotated[
             list[str] | None,
             Field(
@@ -36,7 +45,7 @@ def register(mcp):
         ctx: Context = None,
     ) -> dict:
         """
-        Audit MTU configuration across a fabric and validate it for VXLAN overlay operation.
+        Audit MTU configuration across one or all fabrics and validate it for VXLAN overlay operation.
 
         Use this when investigating silent packet drops, intermittent throughput degradation,
         or asymmetric performance across ECMP paths — classic symptoms of MTU misconfiguration.
@@ -46,18 +55,28 @@ def register(mcp):
         scope to a specific path; for a leaf-to-leaf analysis include both leaf labels —
         the shared spine links are automatically included.
 
+        Pass blueprint_id=null to audit all blueprints at once.
+
         Returns: assessment (ok/warning/critical), issues_count (critical/warning/total),
-        vxlan_headroom (fabric_inet_mtu, max_inner_ethernet_frame_bytes, max_inner_ip_payload_bytes,
-        can_carry_jumbo_9000_inner), fabric_consistency (per-role inet/physical MTU uniformity,
-        ECMP risk), link_mtu_checks (per-link physical and inet MTU on each side with issue list),
-        per_system_interface_mtu, path_analysis (only when focus_systems given), issues_summary.
+        vxlan_headroom, fabric_consistency, link_mtu_checks, per_system_interface_mtu,
+        path_analysis (only when focus_systems given), issues_summary.
         Data sources: graph DB (L3 MTU) + live rendered config API (physical MTU, one call per device).
         """
-        return await handle_get_fabric_mtu_check(
-            ctx.lifespan_context["sessions"],
-            ctx.lifespan_context["graph_registry"],
-            blueprint_id,
-            focus_systems,
-            issue_description,
-            instance_name,
-        )
+        sessions = ctx.lifespan_context["sessions"]
+        registry = ctx.lifespan_context["graph_registry"]
+        blu_list = await resolve_blueprints(sessions, blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+
+        if len(blu_list) > 1:
+            results = []
+            for bp in blu_list:
+                r = await handle_get_fabric_mtu_check(sessions, registry, bp["id"], focus_systems, issue_description, instance_name)
+                r["blueprint_label"] = bp["label"]
+                results.append(r)
+            return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
+
+        bp = blu_list[0]
+        r = await handle_get_fabric_mtu_check(sessions, registry, bp["id"], focus_systems, issue_description, instance_name)
+        r["blueprint_label"] = bp["label"]
+        return r
