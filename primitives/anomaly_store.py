@@ -364,51 +364,59 @@ class AnomalyStore:
             for r in rows
         ]
 
-    def get_summary(self, blueprint_id: str) -> dict:
-        total = self._con.execute(
-            "SELECT COUNT(*) FROM anomalies WHERE blueprint_id=?",
-            (blueprint_id,),
-        ).fetchone()[0]
+    def get_summary(self, blueprint_id: str, since: str | None = None) -> dict:
+        """
+        Return event counts and per-type breakdown for a blueprint.
 
+        When `since` is provided (ISO-8601 UTC string) counts are restricted to
+        events at or after that timestamp. `currently_active` always reflects the
+        present state regardless of the window.
+        """
         active = len(self.get_currently_active(blueprint_id))
 
+        # Base WHERE clause — optionally time-bounded
+        event_where = "a.blueprint_id = ?"
+        event_params: list = [blueprint_id]
+        if since:
+            event_where += " AND e.timestamp >= ?"
+            event_params.append(since)
+
         oldest = self._con.execute(
-            "SELECT MIN(e.timestamp) FROM events e "
-            "JOIN anomalies a ON a.id=e.anomaly_id WHERE a.blueprint_id=?",
-            (blueprint_id,),
+            f"SELECT MIN(e.timestamp) FROM events e "
+            f"JOIN anomalies a ON a.id=e.anomaly_id WHERE {event_where}",
+            event_params,
         ).fetchone()[0]
 
         newest = self._con.execute(
-            "SELECT MAX(e.timestamp) FROM events e "
-            "JOIN anomalies a ON a.id=e.anomaly_id WHERE a.blueprint_id=?",
-            (blueprint_id,),
+            f"SELECT MAX(e.timestamp) FROM events e "
+            f"JOIN anomalies a ON a.id=e.anomaly_id WHERE {event_where}",
+            event_params,
         ).fetchone()[0]
 
         total_events = self._con.execute(
-            "SELECT COUNT(*) FROM events e "
-            "JOIN anomalies a ON a.id=e.anomaly_id WHERE a.blueprint_id=?",
-            (blueprint_id,),
+            f"SELECT COUNT(*) FROM events e "
+            f"JOIN anomalies a ON a.id=e.anomaly_id WHERE {event_where}",
+            event_params,
         ).fetchone()[0]
 
         by_type = self._con.execute(
-            """SELECT a.anomaly_type,
+            f"""SELECT a.anomaly_type,
                       COUNT(DISTINCT a.id)                         AS identities,
                       SUM(CASE WHEN e.raised=1 THEN 1 ELSE 0 END) AS raises,
                       SUM(CASE WHEN e.raised=0 THEN 1 ELSE 0 END) AS clears
                FROM anomalies a
                JOIN events e ON e.anomaly_id = a.id
-               WHERE a.blueprint_id = ?
+               WHERE {event_where}
                GROUP BY a.anomaly_type
                ORDER BY raises DESC""",
-            (blueprint_id,),
+            event_params,
         ).fetchall()
 
         return {
-            "total_identities": total,
             "currently_active": active,
-            "total_events":     total_events,
-            "oldest_event":     oldest,
-            "newest_event":     newest,
+            "events_in_window": total_events,
+            "window_oldest":    oldest,
+            "window_newest":    newest,
             "by_type": [
                 {
                     "anomaly_type": r["anomaly_type"],

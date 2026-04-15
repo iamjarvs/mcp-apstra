@@ -1,5 +1,5 @@
 from datetime import datetime, timezone, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastmcp import Context
 from pydantic import Field
@@ -86,6 +86,18 @@ def register(mcp):
     @mcp.tool()
     async def get_anomaly_summary(
         blueprint_id: Annotated[str, "Apstra blueprint ID."],
+        time_window: Annotated[
+            Literal["5min", "30min", "1hr", "12hr", "24hr", "7d"],
+            Field(
+                default="24hr",
+                description=(
+                    "Time window for event counts. "
+                    "5min = last 5 minutes, 30min = last 30 minutes, "
+                    "1hr = last hour, 12hr = last 12 hours, "
+                    "24hr = last 24 hours (default), 7d = last 7 days."
+                ),
+            ),
+        ] = "24hr",
         instance_name: Annotated[
             str | None,
             Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
@@ -93,45 +105,62 @@ def register(mcp):
         ctx: Context = None,
     ) -> dict:
         """
-        Return coverage and count statistics for the local anomaly store for a blueprint.
+        Return event counts and per-type breakdown for the local anomaly store over a
+        specific time window.
 
         Use this before querying anomaly data to confirm data is available and understand
-        how much history is loaded. Shows whether the initial 7-day backfill has completed,
-        how many raise and clear events are stored per anomaly type, and how many anomalies
-        are currently active according to the store.
+        how much activity occurred in the chosen window. Shows how many raise and clear
+        events fired per anomaly type, and how many anomalies are currently active
+        (always reflects present state, independent of the chosen window).
 
-        Returns: backfill_ready (bool), last_poll_at, type_counts (raises/clears per
-        anomaly type), active_count (anomalies currently raised), oldest_event, newest_event.
+        Time window options: 5min, 30min, 1hr, 12hr, 24hr (default), 7d.
+
+        Returns: time_window, since (ISO timestamp), currently_active, events_in_window,
+        window_oldest, window_newest, by_type (raises/clears/identities per anomaly type),
+        backfill_ready, last_poll_at.
         Data source: local SQLite store (updated every 60 s by background poller).
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
             return {"error": "anomaly_store not available"}
 
-        sessions   = ctx.lifespan_context["sessions"]
+        _window_to_delta = {
+            "5min":  timedelta(minutes=5),
+            "30min": timedelta(minutes=30),
+            "1hr":   timedelta(hours=1),
+            "12hr":  timedelta(hours=12),
+            "24hr":  timedelta(hours=24),
+            "7d":    timedelta(days=7),
+        }
+        since_dt = datetime.now(timezone.utc) - _window_to_delta[time_window]
+        since_iso = since_dt.isoformat()
+
+        sessions = ctx.lifespan_context["sessions"]
         target_sessions = [s for s in sessions if instance_name is None or s.name == instance_name]
 
         summaries = []
         for session in target_sessions:
-            summary = store.get_summary(blueprint_id)
+            summary = store.get_summary(blueprint_id, since=since_iso)
             ps = store.get_poll_state(blueprint_id, session.name)
             summaries.append({
-                "instance":         session.name,
-                "backfill_ready":   ps.get("backfill_complete", False),
-                "last_poll_at":     ps.get("last_poll_at"),
+                "instance":       session.name,
+                "backfill_ready": ps.get("backfill_complete", False),
+                "last_poll_at":   ps.get("last_poll_at"),
                 **summary,
             })
 
-        if len(summaries) == 1:
-            return {
-                "blueprint_id": blueprint_id,
-                **summaries[0],
-                "_meta": {"data_source": "local_anomaly_store"},
-            }
-        return {
+        base = {
             "blueprint_id": blueprint_id,
-            "instances":    summaries,
-            "_meta":        {"data_source": "local_anomaly_store"},
+            "time_window":  time_window,
+            "since":        since_iso,
+        }
+
+        if len(summaries) == 1:
+            return {**base, **summaries[0], "_meta": {"data_source": "local_anomaly_store"}}
+        return {
+            **base,
+            "instances": summaries,
+            "_meta":     {"data_source": "local_anomaly_store"},
         }
 
     @mcp.tool()
@@ -179,5 +208,189 @@ def register(mcp):
             "_meta": {
                 "data_source": "local_anomaly_store",
                 "note": "State reflects last successful store update (≤60 s ago)",
+            },
+        }
+
+    @mcp.tool()
+    async def get_device_anomaly_history(
+        blueprint_id: Annotated[str, "Apstra blueprint ID. Use get_blueprints to discover valid values."],
+        device: Annotated[
+            str,
+            "Device hostname exactly as shown in Apstra (e.g. 'Leaf1', 'Spine2'). Required.",
+        ],
+        from_time: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    "Start of the query window as an ISO-8601 UTC timestamp "
+                    "(e.g. '2026-04-15T08:00:00Z'). "
+                    "When provided, time_window is ignored. "
+                    "If only from_time is given, to_time defaults to now."
+                ),
+            ),
+        ] = None,
+        to_time: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    "End of the query window as an ISO-8601 UTC timestamp "
+                    "(e.g. '2026-04-15T10:00:00Z'). "
+                    "Only used when from_time is also provided. Defaults to now."
+                ),
+            ),
+        ] = None,
+        time_window: Annotated[
+            Literal["5min", "30min", "1hr", "12hr", "24hr", "7d"] | None,
+            Field(
+                default="24hr",
+                description=(
+                    "Rolling look-back window used when from_time is NOT supplied. "
+                    "5min, 30min, 1hr, 12hr, 24hr (default), 7d."
+                ),
+            ),
+        ] = "24hr",
+        anomaly_type: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Narrow to one anomaly type: bgp, cabling, interface, route, lag, mac, probe, deployment, liveness, config.",
+            ),
+        ] = None,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
+        ctx: Context = None,
+    ) -> dict:
+        """
+        Return the complete anomaly history for a specific device over a chosen time window,
+        with full raise-and-clear lifecycle detail for every anomaly.
+
+        Use this when you need to understand everything that happened on a device during an
+        incident window, a maintenance period, or across a user-specified time range.
+
+        Time selection:
+          - Supply from_time (and optionally to_time) for an exact window.
+            Both must be ISO-8601 UTC strings, e.g. "2026-04-15T08:00:00Z".
+            If to_time is omitted the window ends at the current time.
+          - If from_time is not given, the time_window parameter is used
+            (default: "24hr" — last 24 hours).
+
+        Results are grouped by anomaly identity so you see one entry per distinct fault
+        rather than a raw flat event list. Each entry shows:
+          - anomaly_type, role: what kind of fault and which device role
+          - identity: the unique key Apstra uses to distinguish this anomaly instance
+            (e.g. which BGP session, which interface, which route prefix)
+          - expected: Apstra's intent for this element
+          - first_detected: when this anomaly identity first appeared in the store
+          - currently_active: whether this anomaly is still raised right now
+          - raise_count, clear_count: how many times it toggled in the window
+          - events: full chronological list of all raise/clear transitions, each with:
+              timestamp, raised (true=fault appeared, false=fault cleared),
+              actual (the observed state at that moment), source
+
+        Results are ordered newest-first by the most recent event for each anomaly.
+        No event count limit is applied — all events in the window are returned.
+        Data source: local SQLite store (updated every 60 s by background poller).
+        """
+        store = ctx.lifespan_context.get("anomaly_store")
+        if store is None:
+            return {"error": "anomaly_store not available"}
+
+        _window_to_delta = {
+            "5min":  timedelta(minutes=5),
+            "30min": timedelta(minutes=30),
+            "1hr":   timedelta(hours=1),
+            "12hr":  timedelta(hours=12),
+            "24hr":  timedelta(hours=24),
+            "7d":    timedelta(days=7),
+        }
+
+        now = datetime.now(timezone.utc)
+
+        if from_time:
+            since_iso = from_time
+            until_iso = to_time if to_time else now.isoformat()
+            window_label = f"{from_time} → {until_iso}"
+        else:
+            window = time_window or "24hr"
+            since_iso = (now - _window_to_delta[window]).isoformat()
+            until_iso = now.isoformat()
+            window_label = window
+
+        # Fetch all events — no limit because caller asked for full history
+        events = store.query_events(
+            blueprint_id=blueprint_id,
+            instance_name=instance_name,
+            anomaly_type=anomaly_type,
+            device=device,
+            since=since_iso,
+            until=until_iso,
+            raised_only=False,
+            limit=10_000,
+        )
+
+        # Determine which anomaly identities are currently active
+        currently_active_set = {
+            str(a["identity"])
+            for a in store.get_currently_active(blueprint_id, instance_name)
+            if a.get("device") == device
+        }
+
+        # Group events by identity key (JSON string of identity dict)
+        import json as _json
+        from collections import defaultdict
+
+        grouped: dict[str, dict] = {}
+        order: list[str] = []  # insertion order = most-recent-event first
+
+        for ev in events:
+            key = _json.dumps(ev["identity"], sort_keys=True)
+            if key not in grouped:
+                grouped[key] = {
+                    "anomaly_type":     ev["anomaly_type"],
+                    "role":             ev["role"],
+                    "identity":         ev["identity"],
+                    "expected":         ev["expected"],
+                    "first_detected":   ev["first_detected"],
+                    "currently_active": key in currently_active_set or str(ev["identity"]) in currently_active_set,
+                    "raise_count":      0,
+                    "clear_count":      0,
+                    "events":           [],
+                }
+                order.append(key)
+            entry = grouped[key]
+            if ev["raised"]:
+                entry["raise_count"] += 1
+            else:
+                entry["clear_count"] += 1
+            entry["events"].append({
+                "timestamp": ev["timestamp"],
+                "raised":    ev["raised"],
+                "actual":    ev["actual"],
+                "source":    ev["source"],
+            })
+
+        # Reverse events within each group so they read oldest → newest (easier to follow)
+        anomalies = []
+        for key in order:
+            entry = grouped[key]
+            entry["events"] = list(reversed(entry["events"]))
+            anomalies.append(entry)
+
+        return {
+            "blueprint_id":   blueprint_id,
+            "device":         device,
+            "time_window":    window_label,
+            "since":          since_iso,
+            "until":          until_iso,
+            "anomaly_count":  len(anomalies),
+            "total_events":   len(events),
+            "anomalies":      anomalies,
+            "_meta": {
+                "data_source": "local_anomaly_store",
+                "note": "Events grouped by anomaly identity. Each entry shows the full raise/clear lifecycle within the window.",
             },
         }

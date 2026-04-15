@@ -26,6 +26,7 @@ from tools import systems as systems_tool
 from tools import anomaly_timeline as anomaly_timeline_tool
 from tools import anomaly_analytics as anomaly_analytics_tool
 from tools import run_commands as run_commands_tool
+from tools import system_health as system_health_tool
 from tools import virtual_networks as virtual_networks_tool
 from tools import telemetry as telemetry_tool
 from tools import probes as probes_tool
@@ -77,7 +78,44 @@ mcp = FastMCP(
         "`blueprint_id`, it refers to a specific data centre within a specific instance.\n\n"
         "**Relationship**: An installation with 3 instances each managing 3 blueprints "
         "gives 9 blueprints in total. Tools that accept `instance_name` work at the instance "
-        "level; tools that accept `blueprint_id` work at the data centre level."
+        "level; tools that accept `blueprint_id` work at the data centre level.\n\n"
+        "## Mandatory discovery rules — follow these without exception\n\n"
+        "**blueprint_id**: Never guess, assume, or reuse a `blueprint_id` from a previous "
+        "conversation. Every time a tool requires a `blueprint_id`, you MUST call "
+        "`get_blueprints` first to retrieve the current list. If the user refers to a fabric "
+        "by name (e.g. 'DC1'), resolve the name to an `id` from the `get_blueprints` result "
+        "before proceeding.\n\n"
+        "**system_id**: Never guess or assume a `system_id`. Every time a tool requires a "
+        "`system_id` (hardware chassis serial, e.g. '5254002D005F'), you MUST call "
+        "`get_systems` with the correct `blueprint_id` to retrieve the list of devices and "
+        "match by hostname. The `system_id` field is the hardware serial — do NOT use the "
+        "graph node `id` field.\n\n"
+        "**instance_name**: Do NOT ask the user for an `instance_name`. Leave it as null "
+        "unless the user explicitly names a specific instance. The server will query all "
+        "instances automatically.\n\n"
+        "## Triage-first rules — run these before per-device investigation\n\n"
+        "When a user reports a fabric problem (BGP down, device unreachable, interface errors, "
+        "unexpected behaviour) you MUST run BOTH of these checks first, before investigating "
+        "individual protocols or interfaces:\n\n"
+        "1. **`get_system_liveness`** — identifies any device that Apstra cannot reach. "
+        "If a device appears here, ALL downstream symptoms on that device (BGP failures, "
+        "missing routes, interface anomalies) are likely caused by the reachability loss, "
+        "not individual protocol faults. Present unreachable devices to the user immediately "
+        "and do NOT attempt CLI commands or counter queries against them.\n\n"
+        "2. **`get_config_deviations`** — identifies devices whose live running config has "
+        "drifted from Apstra's intent. A deviating device was changed outside Apstra (manual "
+        "CLI commit, script injection, partial push). The diff shows exactly what was added "
+        "or removed. If a deviated device also shows protocol anomalies, the manual change "
+        "is the likely root cause — investigate the drift first.\n\n"
+        "Only proceed to BGP, interface, telemetry, or CLI tools once liveness and config "
+        "deviation have been checked and their results surfaced to the user.\n\n"
+        "## JunOS CLI rules\n\n"
+        "Before calling `run_device_commands`, call `get_junos_show_commands` if you are "
+        "not certain of the exact command syntax. JunOS differs from IOS/EOS — for example: "
+        "'show bgp summary' not 'show ip bgp', 'show bfd session' not 'show bfd sessions', "
+        "'show route' not 'show ip route', 'show interfaces terse' not 'show interfaces brief'. "
+        "If a command returns result='commandShellError', read the llm_hint field, correct "
+        "the syntax using `get_junos_show_commands`, and retry immediately."
     ),
 )
 
@@ -93,6 +131,7 @@ links_tool.register(mcp)
 mtu_check_tool.register(mcp)
 reference_tool.register(mcp)
 run_commands_tool.register(mcp)
+system_health_tool.register(mcp)
 systems_tool.register(mcp)
 virtual_networks_tool.register(mcp)
 telemetry_tool.register(mcp)

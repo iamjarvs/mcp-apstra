@@ -23,6 +23,54 @@ async def get_anomalies(session, blueprint_id: str) -> dict:
     return await _request(session, "GET", f"/api/blueprints/{blueprint_id}/anomalies")
 
 
+async def get_liveness_anomalies(session, blueprint_id: str) -> dict:
+    """
+    Fetches only liveness-type anomalies for a blueprint.
+    A device appearing here means one or more of its telemetry/management
+    agents are not responding — the device is considered unreachable by Apstra.
+
+    Response shape: {"items": [{anomaly}], "count": N}
+    Each item includes: role, identity (system identifiers), anomaly_type="liveness",
+    expected ({"agents": [...full list], "alive": true}),
+    actual ({"agents": [...responding agents only], "alive": bool}),
+    severity, last_modified_at, id.
+
+    An empty items list means all devices in the blueprint are reachable.
+    """
+    return await _request(
+        session, "GET",
+        f"/api/blueprints/{blueprint_id}/anomalies?anomaly_type=liveness",
+    )
+
+
+async def get_system_configuration(session, device_key: str) -> dict:
+    """
+    Fetches the expected vs actual configuration for a managed system.
+
+    `device_key` is the hardware chassis serial (e.g. "525400708DCE") — the
+    same value as the system_id field returned by get_systems.
+
+    Response shape:
+      system_id: hardware serial
+      deploy_state: "deploy" | "deviated" | "error" | "not_provisioned"
+      deviated: bool — True when the live device config differs from Apstra intent
+      expected.config: the full JunOS config Apstra intends the device to have
+      actual.config: the full JunOS config currently running on the device
+      error_message: non-empty when Apstra cannot retrieve the live config
+      configuration_service_state: "enabled" | "disabled"
+      contiguous_failures: int — consecutive times Apstra failed to read config
+
+    When deviated=True, compute a diff between expected.config and actual.config
+    to find lines added to / removed from the device outside of Apstra management.
+    Lines only in actual (+) = manually added to device.
+    Lines only in expected (-) = removed from device without going through Apstra.
+    """
+    return await _request(
+        session, "GET",
+        f"/api/systems/{device_key}/configuration",
+    )
+
+
 async def get_blueprints(session) -> dict:
     """
     Fetches all blueprints from an Apstra instance.
