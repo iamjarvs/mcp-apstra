@@ -3,6 +3,7 @@ import time
 
 import httpx
 
+from handlers.systems import handle_get_systems
 from primitives import live_data_client
 
 # Status strings that mean "still running — keep polling".
@@ -13,16 +14,68 @@ _RUNNING_STATUSES = {"inprogress", "in_progress", "in progress", "pending", "que
 _SUBMIT_MAX_RETRIES = 3
 _SUBMIT_RETRY_BASE_DELAY = 1.0  # seconds; doubles per attempt
 
-# Cypher query to retrieve all hardware system_ids for switches in a blueprint.
-# Returns only onboarded systems (system_id is not null/empty).
-_SYSTEMS_QUERY = """
-MATCH (sw:system)
-WHERE sw.system_type = 'switch'
-  AND sw.role IN ['leaf', 'spine', 'access', 'superspine']
-  AND sw.system_id IS NOT NULL
-RETURN sw.system_id, sw.label
-ORDER BY sw.label
-"""
+# Hard ceiling on concurrent in-flight systems to avoid overwhelming the
+# Apstra API regardless of what the caller passes.
+_MAX_CONCURRENT_SYSTEMS = 20
+
+
+# ---------------------------------------------------------------------------
+# Known JunOS syntax corrections
+# Maps fragments found in bad commands to the correct form shown to the LLM.
+# ---------------------------------------------------------------------------
+_JUNOS_CORRECTIONS: list[tuple[str, str]] = [
+    ("show bgp neighbors",      "'show bgp neighbor <peer-ip>' or 'show bgp summary'"),
+    ("show bgp group",          "'show bgp group <group-name>' (group name is required)"),
+    ("show bfd sessions",       "'show bfd session' (JunOS uses singular: 'session')"),
+    ("show bfd neighbors",      "'show bfd session'"),
+    ("show mpls lsp detail",    "'show mpls lsp detail' with output_format='text'"),
+    ("show route summary",      "'show route summary' with output_format='text'"),
+    ("show interfaces brief",   "'show interfaces terse'"),
+    ("show arp",                "'show arp' or 'show arp hostname <ip>'"),
+    ("show mac",                "'show ethernet-switching table' (JunOS L2 MAC table)"),
+    ("show ip bgp",             "'show bgp summary' (JunOS uses 'show bgp', not 'show ip bgp')"),
+    ("show ip route",           "'show route' (JunOS uses 'show route', not 'show ip route')"),
+    ("show ip interface",       "'show interfaces terse' or 'show interfaces <if> detail'"),
+    ("show version detail",     "'show version' (no 'detail' keyword in JunOS)"),
+]
+
+
+def _annotate_command_result(result: dict) -> dict:
+    """
+    Enriches a command_result dict when the device returned a JunOS syntax
+    error so the LLM knows not to retry the same command verbatim.
+
+    Adds:
+      syntax_error  — True when result == "commandShellError"
+      llm_hint      — actionable string telling the LLM what to do next
+    """
+    if result.get("result") != "commandShellError":
+        return result
+
+    cmd_lower = result.get("command", "").lower().strip()
+    hint_parts = [
+        "The JunOS CLI rejected this command (syntax error — not a connectivity issue). "
+        "Do NOT retry the same command text.",
+    ]
+
+    correction = next(
+        (corr for frag, corr in _JUNOS_CORRECTIONS if frag in cmd_lower),
+        None,
+    )
+    if correction:
+        hint_parts.append(f"Suggested correction: {correction}.")
+    else:
+        hint_parts.append(
+            "Revise the command: check argument order, use singular noun forms "
+            "(e.g. 'neighbor' not 'neighbors', 'session' not 'sessions'), and "
+            "ensure all required arguments are present before retrying."
+        )
+
+    return {
+        **result,
+        "syntax_error": True,
+        "llm_hint": " ".join(hint_parts),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -119,12 +172,12 @@ async def _run_single_command(
     )
     poll_result = await _poll_until_done(session, request_id, timeout_seconds)
     await _safe_delete(session, request_id)
-    return {
+    return _annotate_command_result({
         "command": command_text,
         "result": poll_result.get("result", poll_result.get("status", "unknown")),
         "output": poll_result.get("output"),
         "error": poll_result.get("error"),
-    }
+    })
 
 
 async def _run_on_system(
@@ -185,12 +238,12 @@ async def _run_on_system(
         async def _poll_one(cmd: str, req_id: str) -> dict:
             poll_result = await _poll_until_done(session, req_id, timeout_seconds)
             await _safe_delete(session, req_id)
-            return {
+            return _annotate_command_result({
                 "command": cmd,
                 "result": poll_result.get("result", poll_result.get("status", "unknown")),
                 "output": poll_result.get("output"),
                 "error": poll_result.get("error"),
-            }
+            })
 
         command_results = await asyncio.gather(*[
             _poll_one(cmd, req_id)
@@ -256,13 +309,17 @@ async def handle_run_commands(
                     "system_count": 1,
                 })
             else:
-                # All-systems mode — discover system_ids from the graph.
-                graph = await registry.get_or_rebuild(session, blueprint_id)
-                rows = graph.query(_SYSTEMS_QUERY)
+                # All-systems mode — use handle_get_systems as the single
+                # source of truth for system discovery so both tools stay in
+                # sync.  Filter out any partially-onboarded switches that have
+                # no hardware serial yet.
+                systems_result = await handle_get_systems(
+                    [session], registry, blueprint_id
+                )
                 systems = [
-                    (r["sw.system_id"], r.get("sw.label") or r["sw.system_id"])
-                    for r in rows
-                    if r.get("sw.system_id")
+                    (s["system_id"], s["label"] or s["system_id"])
+                    for s in systems_result.get("systems", [])
+                    if s.get("system_id")
                 ]
                 if not systems:
                     all_results.append({
@@ -274,9 +331,9 @@ async def handle_run_commands(
                     })
                     continue
 
-                # Semaphore caps concurrent in-flight systems so large fabrics
-                # don't all hammer the Apstra API at the same instant.
-                sem = asyncio.Semaphore(max_concurrent_systems)
+                # Semaphore caps concurrent in-flight systems.  Caller may
+                # request a lower limit but the hard ceiling is always applied.
+                sem = asyncio.Semaphore(min(max_concurrent_systems, _MAX_CONCURRENT_SYSTEMS))
 
                 async def _bounded(sid, label):
                     async with sem:

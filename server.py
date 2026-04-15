@@ -98,7 +98,30 @@ virtual_networks_tool.register(mcp)
 telemetry_tool.register(mcp)
 probes_tool.register(mcp)
 
-if os.environ.get("MCP_VERBOSE"):
+_LOG_LEVEL = os.environ.get("MCP_VERBOSE", "0")
+
+if _LOG_LEVEL == "1":
+    # Standard operational logging:
+    #   - every MCP tool call and its response (no payload bodies)
+    #   - background poller activity (anomaly, counter, graph) at INFO+
+    #   - any poller/store errors always visible
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    for noisy_logger in (
+        "handlers.anomaly_poller",
+        "handlers.counter_poller",
+        "primitives.counter_store",
+        "primitives.anomaly_store",
+        "primitives.graph_client",
+    ):
+        logging.getLogger(noisy_logger).setLevel(logging.INFO)
+    mcp.add_middleware(LoggingMiddleware(include_payloads=False))
+
+elif _LOG_LEVEL == "2":
+    # Full debug: tool payloads, all internal state, timing.
     logging.basicConfig(
         level=logging.DEBUG,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",

@@ -33,18 +33,50 @@ def register(mcp):
         the same either way, though the "endpoint" field in the result will show
         "multiple" or "single" so you can tell which was used.
 
+        Before using this tool
+        -----------------------
+        If you are unsure of the exact JunOS syntax for any command, call
+        get_junos_show_commands first. It returns a categorised reference
+        of correct command strings, JSON-support flags, and notes — covering
+        BGP, BFD, EVPN, routing, interfaces, optical, VRF, L2/MAC, and more.
+        JunOS syntax differs from IOS/EOS in several common ways:
+          - "show bgp summary" / "show bgp neighbor <ip>"  (NOT "show bgp neighbors")
+          - "show bfd session"                             (NOT "show bfd sessions")
+          - "show route"                                   (NOT "show ip route")
+          - "show interfaces terse"                        (NOT "show interfaces brief")
+          - "show ethernet-switching table"                (NOT "show mac address-table")
+
         Command format
         --------------
         Pass standard JunOS CLI commands exactly as you would type them on the
         device.  Examples:
           - "show version"
           - "show bgp summary"
+          - "show bgp neighbor <peer-ip>"
+          - "show bfd session"
           - "show interfaces ge-0/0/0 detail"
           - "show route table inet.0 summary"
+
+        JunOS CLI differences from other vendors:
+          - Use "show bgp summary" or "show bgp neighbor <ip>", NOT "show bgp neighbors"
+          - Use "show bfd session", NOT "show bfd sessions"
+          - Use "show route", NOT "show ip route"
+          - Use "show interfaces terse", NOT "show interfaces brief"
+          - Use "show ethernet-switching table" for L2 MAC tables
 
         For JSON-structured output on commands that support it, set
         output_format="json".  Most operational commands support JSON; use
         output_format="text" (the default) for commands that do not.
+
+        commandShellError — syntax errors
+        ----------------------------------
+        If a command result contains result="commandShellError", the JunOS CLI
+        rejected the command syntax.  This is NOT a connectivity problem — it
+        means the command text was malformed.  When this happens:
+          1. Read the syntax_error=True and llm_hint fields in the result.
+          2. Call get_junos_show_commands to look up the correct syntax.
+          3. Correct the command and retry — do NOT call this tool again
+             with the same command text unchanged.
 
         All-systems mode
         ----------------
@@ -73,10 +105,9 @@ def register(mcp):
                              Default 30 seconds. Increase for slow commands such
                              as "show route" on large tables.
             max_concurrent_systems: Maximum number of switches to query at the
-                             same time. Default 10. Increase (up to ~20) for
-                             larger fabrics where you want faster completion;
-                             decrease if the Apstra instance is under load.
-                             Only applies when system_id is omitted.
+                             same time. Default 10. Hard-capped at 20 regardless
+                             of this value. Decrease if the Apstra instance is
+                             under load. Only applies when system_id is omitted.
             instance_name:   Optional. The Apstra instance to query (as defined
                              in instances.yaml). If omitted, all instances are
                              queried and results are merged.

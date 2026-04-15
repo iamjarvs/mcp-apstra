@@ -100,21 +100,40 @@ def register(mcp):
         ctx: Context = None,
     ) -> dict:
         """
-        Return a categorised reference of Junos operational show commands for use with run_device_commands.
+        Return a categorised reference of JunOS operational show commands
+        for use with run_device_commands.
 
-        IMPORTANT: All commands in this reference are for Junos OS only (QFX, EX, MX, PTX
-        series). Do not use these commands on non-Juniper platforms.
+        IMPORTANT: All commands in this reference are for JunOS only (QFX, EX,
+        MX, PTX). Do not use these commands on non-Juniper platforms.
 
-        Call this before composing a run_device_commands request whenever you need to know
-        the correct command syntax. The returned reference is organised by topic
-        (routing, BGP, EVPN, VXLAN, MAC/L2, BFD, interfaces, VRF/routing-instances,
-        spanning-tree, optical, connectivity, NTP/services, logs, security, system) and each
-        entry includes the command string, a description of what it returns, and whether JSON
-        output is supported (output_format="json" vs "text"). Placeholders in angle brackets
-        (e.g. <prefix>) must be replaced with actual values before calling run_device_commands.
+        WHEN TO CALL THIS TOOL:
+        - Before composing ANY run_device_commands call when you are not
+          100% certain of the exact JunOS command syntax.
+        - Whenever you want to check BGP, BFD, EVPN, routing, interface,
+          optical, VRF, L2/MAC, spanning-tree, or system commands — JunOS
+          syntax differs from IOS/EOS in many common cases.
+        - After receiving a commandShellError result from run_device_commands
+          — look up the correct form here before retrying.
+        - When a user asks you to "check BGP", "check BFD", "look at the
+          routing table", "check the MAC table", "check optical levels",
+          or any similar operational question — consult this reference to
+          pick the right command and output_format before calling
+          run_device_commands.
 
-        Returns: platform, categories (list), each with name, description, and commands (list
-        of {command, description, json_supported, notes}).
+        Common JunOS vs IOS/EOS differences (always check here first):
+          - "show bgp neighbor <ip>" or "show bgp summary"  NOT "show bgp neighbors"
+          - "show bfd session"                              NOT "show bfd sessions"
+          - "show route"                                    NOT "show ip route"
+          - "show interfaces terse"                         NOT "show interfaces brief"
+          - "show ethernet-switching table"                 NOT "show mac address-table"
+
+        The reference is organised by topic (routing, BGP, EVPN, VXLAN,
+        MAC/L2, BFD, interfaces, VRF/routing-instances, spanning-tree,
+        optical, connectivity, NTP/services, logs, security, system). Each
+        entry includes the command string, a description of what it returns,
+        whether JSON output is supported, and any important notes.
+        Placeholders in angle brackets (e.g. <prefix>) must be replaced with
+        real values before passing to run_device_commands.
         """
         return {
             "title": "Junos Show Command Reference",

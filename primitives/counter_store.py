@@ -99,6 +99,8 @@ class CounterStore:
                 instance_name   TEXT    NOT NULL,
                 system_id       TEXT    NOT NULL,
                 interface_name  TEXT    NOT NULL,
+                blueprint_id    TEXT,
+                hostname        TEXT,
                 UNIQUE(instance_name, system_id, interface_name)
             );
 
@@ -115,6 +117,25 @@ class CounterStore:
             CREATE INDEX IF NOT EXISTS idx_iface_sys    ON interfaces(instance_name, system_id);
         """)
         self._con.commit()
+        # Live migration for DBs created before blueprint_id / hostname were added.
+        # ALTER TABLE must happen before the idx_iface_bp index can be created.
+        for col_def in (
+            "ALTER TABLE interfaces ADD COLUMN blueprint_id TEXT",
+            "ALTER TABLE interfaces ADD COLUMN hostname     TEXT",
+        ):
+            try:
+                self._con.execute(col_def)
+                self._con.commit()
+            except sqlite3.OperationalError:
+                pass  # column already exists
+        # Index on blueprint_id — created after migration so the column exists.
+        try:
+            self._con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_iface_bp ON interfaces(instance_name, blueprint_id)"
+            )
+            self._con.commit()
+        except sqlite3.OperationalError:
+            pass
 
     # ── Write helpers ─────────────────────────────────────────────────────────
 
@@ -123,9 +144,13 @@ class CounterStore:
         instance_name: str,
         system_id: str,
         interface_name: str,
+        blueprint_id: str | None = None,
+        hostname: str | None = None,
     ) -> int:
         """
         Insert the interface identity if it doesn't exist; return its row id.
+        If the row already exists, update blueprint_id and hostname when
+        provided (a system may move between blueprints over time).
         """
         with self._lock:
             row = self._con.execute(
@@ -134,11 +159,21 @@ class CounterStore:
                 (instance_name, system_id, interface_name),
             ).fetchone()
             if row:
+                if blueprint_id is not None or hostname is not None:
+                    self._con.execute(
+                        "UPDATE interfaces "
+                        "SET blueprint_id=COALESCE(?,blueprint_id), "
+                        "    hostname=COALESCE(?,hostname) "
+                        "WHERE id=?",
+                        (blueprint_id, hostname, row["id"]),
+                    )
+                    self._con.commit()
                 return row["id"]
             self._con.execute(
-                "INSERT INTO interfaces(instance_name, system_id, interface_name) "
-                "VALUES (?,?,?)",
-                (instance_name, system_id, interface_name),
+                "INSERT INTO interfaces"
+                "(instance_name, system_id, interface_name, blueprint_id, hostname) "
+                "VALUES (?,?,?,?,?)",
+                (instance_name, system_id, interface_name, blueprint_id, hostname),
             )
             self._con.commit()
             return self._con.execute(
@@ -322,7 +357,7 @@ class CounterStore:
             params.extend(system_ids)
 
         rows = self._con.execute(
-            f"""SELECT i.system_id, i.interface_name, s.*
+            f"""SELECT i.system_id, i.interface_name, i.blueprint_id, i.hostname, s.*
                 FROM counter_snapshots s
                 JOIN interfaces i ON i.id = s.interface_id
                 {where}
@@ -333,9 +368,14 @@ class CounterStore:
         # Group by interface, compute deltas, aggregate
         from itertools import groupby
         groups: dict[tuple, list] = {}
+        meta: dict[tuple, dict] = {}
         for row in rows:
             key = (row["system_id"], row["interface_name"])
             groups.setdefault(key, []).append(dict(row))
+            meta[key] = {
+                "blueprint_id": row["blueprint_id"],
+                "hostname":     row["hostname"],
+            }
 
         results = []
         for (sid, ifname), snaps in groups.items():
@@ -359,16 +399,19 @@ class CounterStore:
             total_discards = (
                 agg["total_rx_discard_packets"] + agg["total_tx_discard_packets"]
             )
+            m = meta.get((sid, ifname), {})
             results.append({
-                "system_id":          sid,
-                "interface_name":     ifname,
-                "snapshot_count":     len(snaps),
+                "system_id":           sid,
+                "hostname":            m.get("hostname"),
+                "blueprint_id":        m.get("blueprint_id"),
+                "interface_name":      ifname,
+                "snapshot_count":      len(snaps),
                 **agg,
-                "total_discards":     total_discards,
-                "total_errors":       total_errors,
+                "total_discards":      total_discards,
+                "total_errors":        total_errors,
                 "error_rate_per_hour": round(total_errors / max(hours_back, 1), 4),
-                "reset_count":        reset_count,
-                "has_any_errors":     total_errors > 0,
+                "reset_count":         reset_count,
+                "has_any_errors":      total_errors > 0,
             })
 
         results.sort(key=lambda r: r["total_errors"], reverse=True)

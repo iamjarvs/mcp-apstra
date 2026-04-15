@@ -427,20 +427,19 @@ async def get_all_systems(session) -> dict:
       {
         "items": [
           {
-            "id":        "graph-node-uuid",
-            "system_id": "5254002D005F",   <- hardware chassis serial
-            "status":    { ... },
-            ...
+            "id":         "5254002D005F",   <- same as device_key
+            "device_key": "5254002D005F",   <- hardware chassis serial
+            "facts":      { "hostname": "...", "serial_number": "...", ... },
+            "status":     { "hostname": "...", "comm_state": "...", ... },
+            "user_config": { ... },
+            "container_status": { ... }
           }, ...
         ]
       }
 
-    `system_id` is the hardware chassis serial number used by the telemetry
-    APIs (e.g. /api/systems/{system_id}/counters).
-
-    Note: `id` is the Apstra graph node ID, NOT the same as `system_id`.
-    Managed systems that have not yet been assigned a chassis serial may have
-    system_id == None or an empty string — filter these out before using the
-    value as a counters endpoint key.
+    `device_key` is the hardware chassis serial used as the system identifier
+    in all telemetry API paths (e.g. /api/systems/{device_key}/counters).
+    `id` equals `device_key` for managed systems. There is no top-level
+    `system_id` field — use `device_key`.
     """
     return await _request(session, "GET", "/api/systems")
