@@ -8,16 +8,107 @@ Supports multiple Apstra instances simultaneously. Clean three-layer architectur
 
 ## Table of contents
 
+- [Claude Desktop (quick install)](#claude-desktop-quick-install)
 - [What this does](#what-this-does)
-- [Quick start](#quick-start)
+- [Quick start (local dev)](#quick-start-local-dev)
 - [Configuration](#configuration)
 - [Running the server](#running-the-server)
-- [Connecting to Claude Desktop](#connecting-to-claude-desktop)
 - [Available tools](#available-tools)
 - [Architecture](#architecture)
 - [Data sources](#data-sources)
 - [Testing](#testing)
 - [Project structure](#project-structure)
+
+---
+
+## Claude Desktop (quick install)
+
+The fastest way to use this server — no cloning or virtual environments needed. [uv](https://docs.astral.sh/uv/) manages the install automatically.
+
+### Option 1 — single Apstra instance (recommended for most users)
+
+All configuration is provided as environment variables directly in the Claude Desktop config. No files to edit.
+
+```json
+{
+  "mcpServers": {
+    "apstra": {
+      "command": "uvx",
+      "args": ["apstra-mcp"],
+      "env": {
+        "APSTRA_HOST": "https://apstra.example.com",
+        "APSTRA_USERNAME": "admin",
+        "APSTRA_PASSWORD": "secretpassword"
+      }
+    }
+  }
+}
+```
+
+**All available env vars for single-instance mode:**
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `APSTRA_HOST` | yes | — | Full URL of your Apstra controller, e.g. `https://apstra.example.com` |
+| `APSTRA_USERNAME` | yes | — | Login username |
+| `APSTRA_PASSWORD` | yes | — | Login password |
+| `APSTRA_SSL_VERIFY` | no | `false` | Set to `true` if your controller has a valid CA-signed certificate. Most Apstra deployments use self-signed certs so this defaults to `false` |
+| `APSTRA_INSTANCE_NAME` | no | `default` | Friendly label for this instance, shown in tool responses |
+| `MCP_VERBOSE` | no | _(unset)_ | Set to `1` for operational logging or `2` for full debug logging |
+
+### Option 2 — multiple Apstra instances
+
+Create an `instances.yaml` file anywhere on your machine (e.g. `~/.apstra/instances.yaml`) and point the server at it:
+
+```yaml
+# ~/.apstra/instances.yaml
+instances:
+  - name: dc-primary
+    host: https://apstra-prod.example.com
+    username: admin
+    password: secretpassword
+    ssl_verify: false
+
+  - name: dc-dr
+    host: https://apstra-dr.example.com
+    username: admin
+    password: secretpassword
+    ssl_verify: false
+```
+
+Then reference it in your Claude Desktop config:
+
+```json
+{
+  "mcpServers": {
+    "apstra": {
+      "command": "uvx",
+      "args": ["apstra-mcp"],
+      "env": {
+        "APSTRA_CONFIG_FILE": "/Users/yourname/.apstra/instances.yaml"
+      }
+    }
+  }
+}
+```
+
+Credentials in the YAML file can be overridden per-instance with environment variables — useful if you prefer not to store passwords in the file:
+
+```bash
+# Pattern: APSTRA_{NAME_UPPERCASED}_USERNAME / _PASSWORD
+# Hyphens in the name become underscores.
+APSTRA_DC_PRIMARY_USERNAME=admin
+APSTRA_DC_PRIMARY_PASSWORD=secretpassword
+```
+
+### Where is claude_desktop_config.json?
+
+| OS | Path |
+|----|------|
+| macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
+
+Restart Claude Desktop after saving changes.
 
 ---
 
@@ -35,7 +126,7 @@ An AI assistant with this server connected can answer questions like:
 
 ---
 
-## Quick start
+## Quick start (local dev)
 
 ```bash
 # 1. Clone and enter the repo
@@ -177,25 +268,6 @@ python auth_test.py
 ```
 
 Prints session status every 10 seconds — confirm `token_valid: True` and `host_reachable: True` for each instance.
-
----
-
-## Connecting to Claude Desktop
-
-Add this to your Claude Desktop `claude_desktop_config.json`:
-
-```json
-{
-  "mcpServers": {
-    "apstra": {
-      "command": "/path/to/mcp-apstra/.venv/bin/fastmcp",
-      "args": ["run", "/path/to/mcp-apstra/server.py"]
-    }
-  }
-}
-```
-
-Replace `/path/to/mcp-apstra` with the absolute path to this repo. Restart Claude Desktop after saving.
 
 ---
 

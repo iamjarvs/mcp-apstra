@@ -199,7 +199,7 @@ elif _LOG_LEVEL == "2":
     mcp.add_middleware(TimingMiddleware())
     mcp.add_middleware(LoggingMiddleware(include_payloads=True, max_payload_length=2000))
 
-if __name__ == "__main__":
+def main():
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     host = os.environ.get("MCP_HOST", "0.0.0.0")
     port = int(os.environ.get("MCP_PORT", "8000"))
@@ -207,4 +207,8 @@ if __name__ == "__main__":
         mcp.run(transport="streamable-http", host=host, port=port)
     else:
         mcp.run()
+
+
+if __name__ == "__main__":
+    main()
 

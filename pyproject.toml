@@ -15,6 +15,9 @@ dev = [
     "pytest-asyncio>=1.3.0",
 ]
 
+[project.scripts]
+apstra-mcp = "server:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
