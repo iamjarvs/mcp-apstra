@@ -415,7 +415,11 @@ class CounterStore:
             })
 
         results.sort(key=lambda r: r["total_errors"], reverse=True)
-        return results[:top_n]
+        # Only return interfaces that actually have errors; if none do, return empty.
+        results_with_errors = [r for r in results if r["has_any_errors"]]
+        if results_with_errors:
+            return results_with_errors[:top_n]
+        return []
 
     def get_coverage_summary(self, instance_name: str) -> dict:
         """

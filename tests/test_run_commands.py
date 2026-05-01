@@ -481,7 +481,9 @@ class TestHandleRunCommandsSingleSystem:
         )
 
         assert result["instance"] == "dc-primary"
-        assert "error" in result
+        # handle_get_systems catches the registry error internally and returns
+        # an empty systems list; handle_run_commands surfaces this as a note.
+        assert result["system_count"] == 0
         assert result["systems"] == []
 
 

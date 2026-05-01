@@ -50,6 +50,11 @@ def register(mcp):
         12 hr). A fabric-wide total is included alongside per-device rows so you can
         distinguish a single-device problem from a fabric-wide event.
 
+        IMPORTANT — warm-up period: This tool reads from the local anomaly store, which
+        is populated by a background poller starting ~60 s after server startup. On a
+        freshly restarted server, device_count will be 0 even if anomalies exist. If you
+        see empty results, use get_current_anomalies for the live count instead.
+
         Returns: devices (list with device hostname, total_raises, trend list of
         {bucket, raises, clears}) sorted by total_raises descending; fabric_total
         (same buckets aggregated across all devices); bucket_size.
@@ -57,11 +62,11 @@ def register(mcp):
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
-            return {"error": "anomaly_store not available"}
+            return {"error": "anomaly_store not available", "hint": "The anomaly store populates ~60 s after server start. Use get_current_anomalies for real-time data in the meantime."}
 
         blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
         if not blu_list:
-            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+            return {"error": f"No blueprints found matching '{blueprint_id}'", "hint": "Call get_blueprints to list available blueprints and their labels."}
         if len(blu_list) > 1:
             results = []
             for bp in blu_list:
@@ -169,11 +174,11 @@ def register(mcp):
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
-            return {"error": "anomaly_store not available"}
+            return {"error": "anomaly_store not available", "hint": "The anomaly store populates ~60 s after server start. Use get_current_anomalies for real-time data in the meantime."}
 
         blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
         if not blu_list:
-            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+            return {"error": f"No blueprints found matching '{blueprint_id}'", "hint": "Call get_blueprints to list available blueprints and their labels."}
         if len(blu_list) > 1:
             results = []
             for bp in blu_list:
@@ -281,11 +286,11 @@ def register(mcp):
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
-            return {"error": "anomaly_store not available"}
+            return {"error": "anomaly_store not available", "hint": "The anomaly store populates ~60 s after server start. Use get_current_anomalies for real-time data in the meantime."}
 
         blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
         if not blu_list:
-            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+            return {"error": f"No blueprints found matching '{blueprint_id}'", "hint": "Call get_blueprints to list available blueprints and their labels."}
         if len(blu_list) > 1:
             results = []
             for bp in blu_list:
@@ -407,11 +412,11 @@ def register(mcp):
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
-            return {"error": "anomaly_store not available"}
+            return {"error": "anomaly_store not available", "hint": "The anomaly store populates ~60 s after server start. Use get_current_anomalies for real-time data in the meantime."}
 
         blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
         if not blu_list:
-            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+            return {"error": f"No blueprints found matching '{blueprint_id}'", "hint": "Call get_blueprints to list available blueprints and their labels."}
         if len(blu_list) > 1:
             results = []
             for bp in blu_list:
@@ -545,11 +550,11 @@ def register(mcp):
         """
         store = ctx.lifespan_context.get("anomaly_store")
         if store is None:
-            return {"error": "anomaly_store not available"}
+            return {"error": "anomaly_store not available", "hint": "The anomaly store populates ~60 s after server start. Use get_current_anomalies for real-time data in the meantime."}
 
         blu_list = await resolve_blueprints(ctx.lifespan_context["sessions"], blueprint_id)
         if not blu_list:
-            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+            return {"error": f"No blueprints found matching '{blueprint_id}'", "hint": "Call get_blueprints to list available blueprints and their labels."}
         if len(blu_list) > 1:
             results = []
             for bp in blu_list:

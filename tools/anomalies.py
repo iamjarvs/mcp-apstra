@@ -35,8 +35,9 @@ def register(mcp):
         Use this for a definitive real-time snapshot of current fabric health: which
         anomalies are active right now, their severity, type, and affected node. For
         faster responses with zero API latency, use get_active_anomalies_from_store
-        (local cache, updated every 60 s). For historical context and trend analysis
-        use get_anomaly_events or get_anomaly_trend.
+        (local cache, updated every 60 s — returns count=0 within the first ~60 s after
+        server restart). For historical context and trend analysis use get_anomaly_events
+        or get_anomaly_trend.
 
         Pass blueprint_id=null to check all blueprints at once. Pass a partial label such
         as "DC1" to match any blueprint whose name contains that string.
@@ -48,7 +49,7 @@ def register(mcp):
         sessions = ctx.lifespan_context["sessions"]
         blu_list = await resolve_blueprints(sessions, blueprint_id)
         if not blu_list:
-            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+            return {"error": f"No blueprints found matching '{blueprint_id}'", "hint": "Call get_blueprints to list available blueprints and their labels."}
 
         if len(blu_list) > 1:
             results = []

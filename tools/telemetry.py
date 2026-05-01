@@ -19,6 +19,7 @@ field on each system object (e.g. "5254002D005F"), NOT the graph node `id`.
 
 from typing import Annotated
 
+import httpx
 from fastmcp import Context
 from pydantic import Field
 
@@ -35,7 +36,7 @@ def register(mcp):
             str,
             "Hardware chassis serial (e.g. '5254002D005F'). Use the system_id field from get_systems — NOT the id field.",
         ],
-        interface: Annotated[
+        interface_name: Annotated[
             str | None,
             Field(default=None, description="Filter to one interface name (e.g. 'ge-0/0/1'). Omit to return all interfaces."),
         ] = None,
@@ -52,6 +53,10 @@ def register(mcp):
         """
         Return the latest raw cumulative interface counters polled from a device.
 
+        NOTE: This tool takes system_id (hardware serial) only — it does NOT take a
+        blueprint_id parameter. The system_id uniquely identifies the device across all
+        blueprints. Use get_systems to discover the system_id for a named device.
+
         Use this to check whether an interface has error activity at all (set errors_only=True
         for a fast scan across all ports), inspect exact byte and packet counts, or confirm
         there are no FCS, alignment, or discard errors. These are cumulative totals since
@@ -67,14 +72,14 @@ def register(mcp):
         sessions = ctx.lifespan_context["sessions"]
         target = [s for s in sessions if instance_name is None or s.name == instance_name]
         if not target:
-            return {"error": f"No session found for instance '{instance_name}'"}
+            return {"error": f"No session found for instance '{instance_name}'", "hint": "Do not set instance_name — leave as None to query all instances automatically."}
 
         session = target[0]
         raw = await live_data_client.get_interface_counters(session, system_id)
         items = raw.get("items", [])
 
-        if interface:
-            items = [i for i in items if i.get("interface_name") == interface]
+        if interface_name:
+            items = [i for i in items if i.get("interface_name") == interface_name]
 
         ERROR_FIELDS = {
             "fcs_errors", "alignment_errors", "symbol_errors",
@@ -100,7 +105,7 @@ def register(mcp):
             "interface_count": len(result_items),
             "interfaces_with_errors": error_count,
             "delta_microseconds": raw.get("delta_microseconds"),
-            "filters": {"interface": interface, "errors_only": errors_only},
+            "filters": {"interface": interface_name, "errors_only": errors_only},
             "interfaces": result_items,
             "_meta": {
                 "data_source": "live_apstra_api",
@@ -115,68 +120,66 @@ def register(mcp):
 
     @mcp.tool()
     async def get_interface_utilisation(
-        blueprint_id: str,
-        system_id: str = None,
-        interface: str = None,
-        top_n: int = 10,
-        instance_name: str = None,
+        blueprint_id: Annotated[
+            str,
+            Field(description=(
+                "Required. Apstra blueprint ID or partial label (e.g. 'DC1'). "
+                "IBA probes are per-blueprint — a blueprint_id is required. "
+                "Use get_blueprints to list available blueprints and their IDs."
+            )),
+        ],
+        system_id: Annotated[
+            str | None,
+            Field(default=None, description="Hardware chassis serial (e.g. '5254002D005F'). Use system_id from get_systems. Omit for all devices."),
+        ] = None,
+        interface_name: Annotated[
+            str | None,
+            Field(default=None, description="Filter to one interface name (e.g. 'ge-0/0/1'). Omit for all interfaces."),
+        ] = None,
+        top_n: Annotated[
+            int,
+            Field(default=10, description="Return only the top N busiest interfaces by utilisation. Set to 0 for all. Default 10."),
+        ] = 10,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns interface utilisation percentages and per-second error/discard
-        rates as computed by the Apstra IBA "Device Traffic" probe.
+        Return interface utilisation percentages and per-second error rates from the
+        Apstra IBA 'Device Traffic' probe.
 
-        Unlike get_interface_counters (which returns raw cumulative totals),
-        this tool returns computed averages over the probe's sampling period
-        (typically 120 s), making it directly useful for answering throughput
-        and utilisation questions.
+        Use this for throughput and utilisation questions: which ports are busiest, are uplinks
+        balanced, are there persistent discard or error rates. Values are rolling averages
+        (~120 s window), not cumulative totals — use get_interface_counters for raw totals and
+        get_interface_error_trend for historical error growth.
 
-        Use this tool when you want to answer questions like:
-          - "What is the utilisation on the uplinks to Spine2?"
-          - "Which interfaces are the most heavily loaded in this blueprint?"
-          - "Are there any persistent discard or error rates on fabric ports?"
-          - "Is the bandwidth utilisation on Leaf1's spine-facing ports balanced?"
+        Results sorted by max(tx_util, rx_util) descending so busiest ports appear first.
 
-        Fields returned per interface
-        -----------------------------
-          tx_utilization_average    — TX utilisation as a fraction (0.0–1.0)
-          rx_utilization_average    — RX utilisation as a fraction (0.0–1.0)
-          tx_bps_average            — TX bits per second (average)
-          rx_bps_average            — RX bits per second (average)
-          tx_error_pps_average      — TX error packets per second
-          rx_error_pps_average      — RX error packets per second
-          tx_discard_pps_average    — TX discard packets per second
-          rx_discard_pps_average    — RX discard packets per second
-          fcs_errors_per_second_average
-          speed                     — link speed in bits per second
-          role                      — interface role (spine_leaf, to_generic, etc.)
-          system_id, interface, label
-
-        Results are sorted by max(tx_utilization, rx_utilization) descending so
-        the busiest ports always appear first.
-
-        Parameters
-        ----------
-        blueprint_id   : Blueprint to query (IBA probes are per-blueprint).
-        system_id      : Optional filter — return only interfaces on this device.
-                         Use the hardware serial (e.g. "5254002D005F").
-        interface      : Optional filter — return only this interface name.
-        top_n          : Return only the top N busiest interfaces (default 10).
-                         Set to 0 to return all.
-        instance_name  : Target a specific Apstra instance.
-
-        Data source: Apstra IBA probe "Device Traffic" → stage "Average Interface Counters"
-        Sampling period: typically 120 seconds
+        Returns: interfaces (list with system_id, interface, role, speed_bps, tx_util_pct,
+        rx_util_pct, max_util_pct, tx_bps, rx_bps, tx_error_pps, rx_error_pps,
+        tx_discard_pps, rx_discard_pps, fcs_errors_pps), interface_count.
+        Data source: Apstra IBA probe 'Device Traffic' / stage 'Average Interface Counters' (live).
         """
         sessions = ctx.lifespan_context["sessions"]
         target = [s for s in sessions if instance_name is None or s.name == instance_name]
         if not target:
-            return {"error": f"No session found for instance '{instance_name}'"}
+            return {"error": f"No session found for instance '{instance_name}'", "hint": "Do not set instance_name — leave as None to query all instances automatically."}
 
         session = target[0]
 
         # Find the "Device Traffic" probe by label
-        probes_raw = await live_data_client.get_probes(session, blueprint_id)
+        try:
+            probes_raw = await live_data_client.get_probes(session, blueprint_id)
+        except (httpx.RemoteProtocolError, httpx.ConnectError,
+                httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+            return {
+                "error": "Apstra API connection failed while fetching probe list.",
+                "detail": str(exc),
+                "blueprint_id": blueprint_id,
+                "instance": session.name,
+            }
         probes = probes_raw.get("items", [])
         traffic_probe = next(
             (p for p in probes if p.get("label") == "Device Traffic"),
@@ -189,17 +192,26 @@ def register(mcp):
             }
 
         probe_id = traffic_probe["id"]
-        raw = await live_data_client.query_probe_stage(
-            session, blueprint_id, probe_id,
-            stage="Average Interface Counters",
-        )
+        try:
+            raw = await live_data_client.query_probe_stage(
+                session, blueprint_id, probe_id,
+                stage="Average Interface Counters",
+            )
+        except (httpx.RemoteProtocolError, httpx.ConnectError,
+                httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
+            return {
+                "error": "Apstra API connection failed while querying IBA probe data.",
+                "detail": str(exc),
+                "blueprint_id": blueprint_id,
+                "instance": session.name,
+            }
         items = raw.get("items", [])
 
         # Filter
         if system_id:
             items = [i for i in items if i.get("properties", {}).get("system_id") == system_id]
-        if interface:
-            items = [i for i in items if i.get("properties", {}).get("interface") == interface]
+        if interface_name:
+            items = [i for i in items if i.get("properties", {}).get("interface") == interface_name]
 
         # Flatten and annotate
         result_items = []
@@ -237,9 +249,9 @@ def register(mcp):
             "probe":         "Device Traffic / Average Interface Counters",
             "interface_count": len(result_items),
             "filters": {
-                "system_id": system_id,
-                "interface": interface,
-                "top_n":     top_n,
+                "system_id":     system_id,
+                "interface_name": interface_name,
+                "top_n":         top_n,
             },
             "interfaces": result_items,
             "_meta": {
@@ -256,42 +268,34 @@ def register(mcp):
 
     @mcp.tool()
     async def get_system_telemetry(
-        system_ids: list[str],
-        instance_name: str = None,
+        system_ids: Annotated[
+            list[str],
+            Field(description=(
+                "One or more hardware chassis serials (e.g. ['5254002D005F', '525400F8CE53']). "
+                "Use the system_id field from get_systems — NOT the id field."
+            )),
+        ],
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns the latest CPU and memory utilisation for one or more devices
-        as polled by Apstra's streaming telemetry.
+        Return the latest CPU and memory utilisation for one or more devices from Apstra streaming telemetry.
 
-        Use this tool when you want to answer questions like:
-          - "Is Spine1 under CPU or memory pressure?"
-          - "What are the resource utilisation levels across all spines?"
-          - "Which device has the highest memory consumption?"
-          - "Are any devices showing elevated CPU (suggesting a routing issue)?"
+        Use this when asked about device resource health — whether a device is under CPU or memory
+        pressure, or to compare utilisation across a set of devices (e.g. all spines). Use
+        get_systems to discover system_id values for devices by hostname.
 
-        Parameters
-        ----------
-        system_ids    : One or more hardware chassis serial numbers
-                        (e.g. ["5254002D005F", "525400F8CE53"]).
-                        Use get_systems to discover valid values — use the
-                        `system_id` field, NOT the `id` field.
-        instance_name : Target a specific Apstra instance.
-
-        Fields returned per device
-        --------------------------
-          system_id
-          cpu_pct    — current CPU utilisation percentage (integer)
-          memory_pct — current memory utilisation percentage (integer)
-          last_fetched_at — when Apstra last polled this device
-
-        Data source: live Apstra API → device streaming telemetry
-        Latency: values are typically 30–120 s behind real-time
+        Returns: devices (list with system_id, cpu_pct, memory_pct, last_fetched_at), sorted by
+        cpu_pct descending. device_count, errors (list of failed lookups).
+        Data source: live Apstra API → device streaming telemetry (30–120 s behind real-time).
         """
         sessions = ctx.lifespan_context["sessions"]
         target = [s for s in sessions if instance_name is None or s.name == instance_name]
         if not target:
-            return {"error": f"No session found for instance '{instance_name}'"}
+            return {"error": f"No session found for instance '{instance_name}'", "hint": "Do not set instance_name — leave as None to query all instances automatically."}
 
         session = target[0]
 
@@ -342,63 +346,43 @@ def register(mcp):
 
     @mcp.tool()
     async def get_interface_error_trend(
-        system_id: str,
-        interface_name: str,
-        hours_back: int = 24,
-        instance_name: str = None,
+        system_id: Annotated[
+            str,
+            Field(description="Hardware chassis serial (e.g. '5254002D005F'). Use the system_id field from get_systems."),
+        ],
+        interface_name: Annotated[
+            str,
+            Field(description="Exact interface name (e.g. 'ge-0/0/1'). Use get_interface_counters to list available interfaces for a device."),
+        ],
+        hours_back: Annotated[
+            int,
+            Field(default=24, description="Look-back window in hours (1–168). Default 24.", ge=1, le=168),
+        ] = 24,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns a time-series of error counter *growth* for a single interface,
-        using locally stored counter snapshots collected every 5 minutes.
+        Return a time-series of error counter growth for a single interface, sampled every 5 minutes.
 
-        This is the primary tool for detecting creeping errors — e.g. an
-        interface where FCS errors are slowly increasing over hours or days,
-        indicating a physical layer degradation before it causes an outage.
+        Use this to detect creeping physical-layer degradation — an interface where FCS or CRC
+        errors are slowly accumulating over hours, indicating a failing cable or SFP. Each data
+        point is the *delta* between consecutive snapshots (not a cumulative total). has_reset=True
+        flags counter wraps or device reboots. Use get_top_error_growers first to find which
+        interfaces warrant investigation.
 
-        Use this tool when you want to answer questions like:
-          - "Is ge-0/0/1 on Leaf3 accumulating CRC/FCS errors over time?"
-          - "When did errors start appearing on this interface?"
-          - "Are the errors getting worse, improving, or stable?"
-          - "Did the error rate change after the maintenance window?"
-          - "Are there any counter resets (device reboots) in the window?"
-
-        Each row in the `trend` list represents the change in counter values
-        between two consecutive 5-minute poll snapshots:
-
-          polled_at         — timestamp when the later snapshot was taken
-          interval_seconds  — seconds between the two snapshots
-          fcs_errors        — new FCS/CRC errors in this interval
-          alignment_errors  — new alignment errors
-          symbol_errors     — new symbol errors
-          rx_error_packets  — new RX error packets
-          tx_error_packets  — new TX error packets
-          runts             — new undersized frames
-          giants            — new oversized frames
-          rx_discard_packets / tx_discard_packets  — new discards
-          rx_bytes / tx_bytes  — traffic volume in this interval (context)
-          total_errors      — sum of all error counter deltas in this interval
-          has_reset         — True if a counter decreased (device reboot/wrap);
-                              error deltas are set to 0 for that interval
-
-        Parameters
-        ----------
-        system_id      : Hardware chassis serial (e.g. "5254002D005F").
-        interface_name : Exact interface name as returned by the API
-                         (e.g. "ge-0/0/1").
-        hours_back     : How many hours of history to return (1–168).
-                         Default 24 hours.
-        instance_name  : Target a specific Apstra instance.
-
-        Data source: local counter_store (populated every 5 min by counter_poller)
-        Coverage    : Available from first poll after server startup.
-        Note        : Returns empty trend list if fewer than 2 snapshots exist
-                      in the requested window (not enough data to compute deltas).
+        Returns: trend (list with polled_at, interval_seconds, fcs_errors, alignment_errors,
+        symbol_errors, rx/tx_error_packets, runts, giants, rx/tx_discard_packets, rx/tx_bytes,
+        total_errors, has_reset), total_errors, max_errors_in_interval, has_any_errors,
+        data_point_count.
+        Data source: local counter_store (5-min snapshots; needs ≥2 snapshots to compute deltas).
         """
         sessions = ctx.lifespan_context["sessions"]
         target = [s for s in sessions if instance_name is None or s.name == instance_name]
         if not target:
-            return {"error": f"No session found for instance '{instance_name}'"}
+            return {"error": f"No session found for instance '{instance_name}'", "hint": "Do not set instance_name — leave as None to query all instances automatically."}
 
         session = target[0]
         counter_store = ctx.lifespan_context["counter_store"]
@@ -439,61 +423,45 @@ def register(mcp):
 
     @mcp.tool()
     async def get_top_error_growers(
-        hours_back: int = 24,
-        top_n: int = 20,
-        blueprint_id: str = None,
-        instance_name: str = None,
+        hours_back: Annotated[
+            int,
+            Field(default=24, description="Look-back window (1–168 hours). Default 24.", ge=1, le=168),
+        ] = 24,
+        top_n: Annotated[
+            int,
+            Field(default=20, description="Maximum interfaces to return, ranked by total_errors. Default 20."),
+        ] = 20,
+        blueprint_id: Annotated[
+            str | None,
+            Field(default=None, description=(
+                "Restrict results to switches in this blueprint. "
+                "Pass a partial label (e.g. 'DC1'), full UUID, or null for all systems."
+            )),
+        ] = None,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns the interfaces that have accumulated the most error counter
-        growth over the specified time window, ranked worst-first.
+        Return the interfaces accumulating the most error counter growth over a time window, ranked worst-first.
 
-        Use this tool when you want to answer questions like:
-          - "Which interfaces are accumulating errors most rapidly right now?"
-          - "Are there any error trends I should be concerned about after
-            yesterday's change window?"
-          - "Does any interface have a pattern of increasing FCS errors
-            that could indicate a degrading cable or SFP?"
-          - "Show me the health of all fabric uplinks over the past week."
+        Use this as a first-pass scan to find interfaces with degrading physical layer health — FCS,
+        alignment, symbol errors, or discards growing over time. Only interfaces with at least one
+        error are returned. Drill into a specific interface with get_interface_error_trend to see the
+        per-interval breakdown.
 
-        The tool queries the local counter time-series database populated by
-        the counter_poller.  For each interface, it computes the cumulative
-        error growth over the window and returns a ranked summary.
-
-        Fields returned per interface
-        -----------------------------
-          system_id           — hardware chassis serial
-          interface_name
-          snapshot_count      — number of 5-min polls available in the window
-          total_fcs_errors    — total new FCS/CRC errors over the window
-          total_alignment_errors
-          total_symbol_errors
-          total_rx_error_packets / total_tx_error_packets
-          total_runts / total_giants
-          total_discards      — rx_discard + tx_discard totals
-          total_errors        — sum of all error counter growth
-          error_rate_per_hour — total_errors / hours_back
-          reset_count         — number of intervals with a counter reset
-          has_any_errors      — True if any error counter grew
-
-        Results are sorted by total_errors descending.
-
-        Parameters
-        ----------
-        hours_back    : Look-back window (1–168 hours).  Default 24 hours.
-        top_n         : Maximum number of interfaces to return.  Default 20.
-        blueprint_id  : Optional.  If provided, restrict results to systems
-                        in this blueprint (resolved via the graph registry).
-                        If omitted, all systems on the instance are included.
-        instance_name : Target a specific Apstra instance.
-
-        Data source: local counter_store (populated every 5 min by counter_poller)
+        Returns: interfaces (list with system_id, interface_name, snapshot_count, total_fcs_errors,
+        total_alignment_errors, total_symbol_errors, total_rx/tx_error_packets, total_runts,
+        total_giants, total_discards, total_errors, error_rate_per_hour, reset_count, has_any_errors),
+        sorted by total_errors descending.
+        Data source: local counter_store (5-min snapshots by counter_poller).
         """
         sessions = ctx.lifespan_context["sessions"]
         target = [s for s in sessions if instance_name is None or s.name == instance_name]
         if not target:
-            return {"error": f"No session found for instance '{instance_name}'"}
+            return {"error": f"No session found for instance '{instance_name}'", "hint": "Do not set instance_name — leave as None to query all instances automatically."}
 
         session = target[0]
         counter_store = ctx.lifespan_context["counter_store"]

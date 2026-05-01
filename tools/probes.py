@@ -21,64 +21,55 @@ Use get_blueprints to discover valid blueprint_id values.
 """
 
 from datetime import datetime, timezone, timedelta
+from typing import Annotated
 
 from fastmcp import Context
+from pydantic import Field
 
 from primitives import live_data_client
 
 
 def register(mcp):
 
+    _BP_DESC_REQ = (
+        "Required. Apstra blueprint ID or partial label (e.g. 'DC1'). "
+        "Use get_blueprints to list available blueprints and their IDs. "
+        "Pass a full UUID for a specific blueprint."
+    )
+    _INST_DESC = (
+        "Apstra instance name. Do not ask the user for this — leave as None to query all instances. "
+        "Only set if the user explicitly names a specific instance."
+    )
+
     # ── Tool 1: get_probe_list ────────────────────────────────────────────────
 
     @mcp.tool()
     async def get_probe_list(
-        blueprint_id: str,
-        anomalous_only: bool = False,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, Field(description=_BP_DESC_REQ)],
+        anomalous_only: Annotated[
+            bool,
+            Field(default=False, description="If True, return only probes with anomaly_count > 0."),
+        ] = False,
+        instance_name: Annotated[str | None, Field(default=None, description=_INST_DESC)] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns all IBA probes configured in a blueprint with their current
-        operational state and anomaly counts.
+        Return all IBA probes in a blueprint with their operational state and current anomaly counts.
 
-        Use this tool when you want to answer questions like:
-          - "What is Apstra actively monitoring in this blueprint beyond
-            basic anomaly checks?"
-          - "Which probes currently have anomalies?"
-          - "Is there a probe for ECMP imbalance / BGP flapping / VXLAN
-            flood list validation?"
-          - "How many anomalies does the Device Traffic probe have?"
-          - "Is the BGP Monitoring probe operational?"
+        Use this to discover what Apstra is actively monitoring (ECMP imbalance, BGP flapping,
+        VXLAN flood lists, device health, etc.) and which probes currently have anomalies.
+        Use get_probe_detail to see anomaly details for a specific probe, or get_probe_history
+        for time-series data. stage_names in each probe tells you what data you can query.
 
-        Probe state values
-        ------------------
-          operational  — probe is running normally
-          error        — probe has a configuration or runtime error
-          disabled     — probe has been manually disabled
-
-        Fields returned per probe
-        -------------------------
-          id, label, description, state, probe_state, disabled,
-          anomaly_count, predefined_probe (the built-in template name if
-          applicable), stage_names (list of queryable stage names),
-          updated_at
-
-        To query the actual data or anomaly details for a specific probe,
-        use get_probe_detail or get_probe_history with the probe id.
-
-        Parameters
-        ----------
-        blueprint_id   : Blueprint to query.
-        anomalous_only : If True, return only probes with anomaly_count > 0.
-        instance_name  : Target a specific Apstra instance.
-
-        Data source: live Apstra API
+        Returns: probes (list with id, label, description, state, probe_state, disabled,
+        anomaly_count, predefined_probe, stage_names, updated_at), probe_count, total_anomalies.
+        Sorted: probes with anomalies first, then alphabetical.
+        Data source: live Apstra API.
         """
         sessions = ctx.lifespan_context["sessions"]
         target = [s for s in sessions if instance_name is None or s.name == instance_name]
         if not target:
-            return {"error": f"No session found for instance '{instance_name}'"}
+            return {"error": f"No session found for instance '{instance_name}'", "hint": "Do not set instance_name — leave as None to query all instances automatically."}
 
         session = target[0]
         raw = await live_data_client.get_probes(session, blueprint_id)
@@ -108,65 +99,55 @@ def register(mcp):
         total_anomalies = sum(p["anomaly_count"] for p in probes_out)
 
         return {
-            "blueprint_id":   blueprint_id,
-            "instance":       session.name,
-            "probe_count":    len(probes_out),
+            "blueprint_id":    blueprint_id,
+            "instance":        session.name,
+            "probe_count":     len(probes_out),
+            "count":           len(probes_out),
             "total_anomalies": total_anomalies,
-            "filters":        {"anomalous_only": anomalous_only},
-            "probes":         probes_out,
-            "_meta":          {"data_source": "live_apstra_api"},
+            "filters":         {"anomalous_only": anomalous_only},
+            "probes":          probes_out,
+            "_meta":           {"data_source": "live_apstra_api"},
         }
 
     # ── Tool 2: get_probe_detail ──────────────────────────────────────────────
 
     @mcp.tool()
     async def get_probe_detail(
-        blueprint_id: str,
-        probe_id: str,
-        stage: str = None,
-        anomalous_only: bool = False,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, Field(description=_BP_DESC_REQ)],
+        probe_id: Annotated[
+            str,
+            Field(description="Probe UUID. Use get_probe_list to discover probe IDs and their stage_names."),
+        ],
+        stage: Annotated[
+            str | None,
+            Field(default=None, description=(
+                "Stage name to query. Defaults to the first stage if omitted. "
+                "Use get_probe_list → stage_names to see available stages for a probe."
+            )),
+        ] = None,
+        anomalous_only: Annotated[
+            bool,
+            Field(default=False, description="If True, return only rows in an anomalous state (not all stages support this)."),
+        ] = False,
+        instance_name: Annotated[str | None, Field(default=None, description=_INST_DESC)] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Returns the current output and anomaly state of a specific IBA probe,
-        optionally filtered to a single stage.
+        Return the current output and anomaly state for a specific IBA probe stage.
 
-        Use this tool when you want to answer questions like:
-          - "What does the BGP Monitoring probe currently show?"
-          - "Which BGP sessions does the BGP Monitoring probe flag as flapping?"
-          - "What is the ECMP imbalance probe reporting for the spine layer?"
-          - "Show me only the anomalous rows from the VXLAN Flood List probe."
-          - "What are the stage names I can query for this probe?"
+        Use this to see what a probe is currently computing — e.g. which BGP sessions are flagged
+        as flapping, what the ECMP imbalance values are, or which VXLAN flood list entries are
+        anomalous. If no stage is given, the first stage is queried. Call get_probe_list first to
+        find probe IDs and stage names.
 
-        If no `stage` is specified, the tool queries the first stage of the
-        probe.  Use get_probe_list to discover stage names, then call this
-        tool again with a specific stage name to get the data you need.
-
-        Items returned per stage row
-        ----------------------------
-        Each item has:
-          timestamp  — when this data point was last computed
-          value      — the computed value (type depends on stage)
-          properties — dict of grouping dimensions (system_id, interface, etc.)
-
-        Parameters
-        ----------
-        blueprint_id   : Blueprint to query.
-        probe_id       : Probe UUID.  Use get_probe_list to discover probe IDs.
-        stage          : Optional stage name to query.  Defaults to the first
-                         stage if omitted.  Use get_probe_list to see all
-                         stage_names for a probe.
-        anomalous_only : If True, return only rows in an anomalous state.
-                         Not all probe stages support this filter.
-        instance_name  : Target a specific Apstra instance.
-
-        Data source: live Apstra API
+        Returns: probe_label, probe_state, anomaly_count, all_stages, queried_stage, stage_type,
+        stage_description, items (list with timestamp, value, properties), item_count.
+        Data source: live Apstra API.
         """
         sessions = ctx.lifespan_context["sessions"]
         target = [s for s in sessions if instance_name is None or s.name == instance_name]
         if not target:
-            return {"error": f"No session found for instance '{instance_name}'"}
+            return {"error": f"No session found for instance '{instance_name}'", "hint": "Do not set instance_name — leave as None to query all instances automatically."}
 
         session = target[0]
 
@@ -230,57 +211,50 @@ def register(mcp):
 
     @mcp.tool()
     async def get_probe_history(
-        blueprint_id: str,
-        probe_id: str,
-        stage: str,
-        hours_back: int = 1,
-        end_time: str = None,
-        instance_name: str = None,
+        blueprint_id: Annotated[str, Field(description=_BP_DESC_REQ)],
+        probe_id: Annotated[
+            str,
+            Field(description="Probe UUID. Use get_probe_list to discover probe IDs."),
+        ],
+        stage: Annotated[
+            str,
+            Field(description=(
+                "REQUIRED. Stage name to query. "
+                "You MUST call get_probe_list first to get stage_names for this probe — "
+                "do not guess the stage name. "
+                "Alternatively, call get_probe_detail to see all_stages."
+            )),
+        ],
+        hours_back: Annotated[
+            int,
+            Field(default=1, description="How far back to look (1–168 hours). Default 1.", ge=1, le=168),
+        ] = 1,
+        end_time: Annotated[
+            str | None,
+            Field(default=None, description="ISO-8601 end timestamp. Defaults to now."),
+        ] = None,
+        instance_name: Annotated[str | None, Field(default=None, description=_INST_DESC)] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Queries the time-series output of a specific IBA probe stage over a
-        historical time window.
+        Query the time-series output of a specific IBA probe stage over a historical time window.
 
-        Use this tool when you want to answer questions like:
-          - "Has BGP session flapping been getting worse in the last hour?"
-          - "When did the ECMP imbalance probe first start reporting an
-            anomaly?"
-          - "Show me the interface error rate trend for the last 24 hours."
-          - "What was the CPU utilisation on Leaf1 over the past 6 hours?"
-          - "Was there a spike in VXLAN flood list anomalies last night?"
+        Use this to detect trends — e.g. whether BGP flapping is getting worse, when an ECMP
+        imbalance anomaly first appeared, or what CPU utilisation looked like over the past few
+        hours. Call get_probe_list first to find stage names, and get_probe_detail for the
+        current state before looking at history.
 
-        The probe must have time-series data available — most operational
-        probes retain a configurable history window.  Use get_probe_list to
-        find stage names, and get_probe_detail to see the current state before
-        looking at history.
+        Items are returned newest-first. Number of items depends on probe sampling period and
+        the requested window.
 
-        Items returned
-        --------------
-        Each item has:
-          timestamp   — when this data point was recorded
-          value       — computed value at that point in time
-          properties  — grouping dimensions (system_id, interface, etc.)
-
-        Items are returned newest-first.  The number of items depends on the
-        probe sampling period and the requested time window.
-
-        Parameters
-        ----------
-        blueprint_id  : Blueprint to query.
-        probe_id      : Probe UUID.  Use get_probe_list to discover probe IDs.
-        stage         : Stage name to query (required).  Use get_probe_list
-                        or get_probe_detail to discover available stage names.
-        hours_back    : How far back to look (1–168).  Default 1 hour.
-        end_time      : Optional ISO-8601 end timestamp.  Defaults to now.
-        instance_name : Target a specific Apstra instance.
-
-        Data source: live Apstra API
+        Returns: items (list with timestamp, value, properties), item_count, total_count,
+        stage_type, begin_time, end_time.
+        Data source: live Apstra API.
         """
         sessions = ctx.lifespan_context["sessions"]
         target = [s for s in sessions if instance_name is None or s.name == instance_name]
         if not target:
-            return {"error": f"No session found for instance '{instance_name}'"}
+            return {"error": f"No session found for instance '{instance_name}'", "hint": "Do not set instance_name — leave as None to query all instances automatically."}
 
         session = target[0]
         hours_back = max(1, min(hours_back, 168))

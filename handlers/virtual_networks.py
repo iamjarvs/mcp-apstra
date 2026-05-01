@@ -160,7 +160,7 @@ MATCH (sz:security_zone)
 WHERE sz.label = $routing_zone OR sz.vrf_name = $routing_zone
 OPTIONAL MATCH (sz)-[:member_vns]->(vn:virtual_network)
 OPTIONAL MATCH (sw:system)-[:hosted_vn_instances]->(vni:vn_instance)
-  -[:instantiated_by]->(vn)
+  <-[:instantiated_by]-(vn)
 RETURN
   sz.id, sz.label, sz.vrf_name, sz.sz_type,
   vn.id    AS vn_id,
@@ -187,7 +187,7 @@ MATCH (vn:virtual_network)
 WHERE vn.label = $virtual_network OR vn.id = $virtual_network
 OPTIONAL MATCH (sz:security_zone)-[:member_vns]->(vn)
 OPTIONAL MATCH (sw:system)-[:hosted_vn_instances]->(vni:vn_instance)
-  -[:instantiated_by]->(vn)
+  <-[:instantiated_by]-(vn)
 RETURN
   vn.id, vn.label, vn.vn_type, vn.vn_id,
   vn.reserved_vlan_id, vn.ipv4_enabled, vn.ipv4_subnet,

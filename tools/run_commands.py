@@ -1,4 +1,7 @@
+from typing import Annotated
+
 from fastmcp import Context
+from pydantic import Field
 
 from handlers.run_commands import handle_run_commands
 
@@ -7,137 +10,69 @@ def register(mcp):
 
     @mcp.tool()
     async def run_device_commands(
-        blueprint_id: str,
-        commands: list[str],
-        system_id: str = None,
-        output_format: str = "json",
-        timeout_seconds: int = 30,
-        max_concurrent_systems: int = 10,
-        instance_name: str = None,
+        blueprint_id: Annotated[
+            str,
+            Field(description=(
+                "Required. Apstra blueprint ID or partial label (e.g. 'DC1'). "
+                "Use get_blueprints to list available blueprints and their IDs. "
+                "Pass a full UUID for a specific blueprint."
+            )),
+        ],
+        commands: Annotated[
+            list[str],
+            Field(description=(
+                "JunOS CLI commands to run (e.g. ['show bgp summary', 'show interfaces terse']). "
+                "If unsure of exact syntax, call get_junos_show_commands first."
+            )),
+        ],
+        system_id: Annotated[
+            str | None,
+            Field(default=None, description=(
+                "Hardware chassis serial of the target switch (e.g. '5254002D005F'). "
+                "Use the system_id field from get_systems — NOT the id field. "
+                "Omit to run on every onboarded switch in the blueprint (parallel)."
+            )),
+        ] = None,
+        output_format: Annotated[
+            str,
+            Field(default="json", description="'json' for structured output (default). Use 'text' for commands that don't support JSON."),
+        ] = "json",
+        timeout_seconds: Annotated[
+            int,
+            Field(default=30, description="Per-system command timeout in seconds. Increase for slow commands like 'show route' on large tables. Default 30."),
+        ] = 30,
+        max_concurrent_systems: Annotated[
+            int,
+            Field(default=10, description="Max switches queried in parallel when system_id is omitted. Default 10, hard-capped at 20."),
+        ] = 10,
+        instance_name: Annotated[
+            str | None,
+            Field(default=None, description="Apstra instance name. Do not ask the user — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
-        Runs one or more CLI commands on a specific switch, or on every switch
-        in a blueprint, via the Apstra telemetry fetchcmd API.
+        Run one or more JunOS CLI commands on a switch (or all switches) in a blueprint via Apstra.
 
-        This is the primary tool for inspecting live device state — routing
-        tables, interface counters, BGP sessions, LLDP neighbours, logs, etc.
-        Use it whenever you need data that Apstra's graph does not model, or
-        to verify the actual running state against the design intent.
+        Use this to inspect live device state — routing tables, BGP sessions, BFD, LLDP,
+        interface detail, logs — whenever Apstra's graph data is insufficient or you need to
+        verify the actual running state.
 
-        Apstra version compatibility
-        ----------------------------
-        Newer Apstra versions support a batch endpoint that accepts multiple
-        commands in a single request.  Older versions are automatically detected
-        and a per-command fallback is used transparently — the output shape is
-        the same either way, though the "endpoint" field in the result will show
-        "multiple" or "single" so you can tell which was used.
-
-        Before using this tool
-        -----------------------
-        If you are unsure of the exact JunOS syntax for any command, call
-        get_junos_show_commands first. It returns a categorised reference
-        of correct command strings, JSON-support flags, and notes — covering
-        BGP, BFD, EVPN, routing, interfaces, optical, VRF, L2/MAC, and more.
-        JunOS syntax differs from IOS/EOS in several common ways:
+        IMPORTANT — JunOS syntax: Call get_junos_show_commands first if you are unsure of the
+        exact command. Common differences from IOS/EOS:
           - "show bgp summary" / "show bgp neighbor <ip>"  (NOT "show bgp neighbors")
-          - "show bfd session"                             (NOT "show bfd sessions")
-          - "show route"                                   (NOT "show ip route")
-          - "show interfaces terse"                        (NOT "show interfaces brief")
-          - "show ethernet-switching table"                (NOT "show mac address-table")
+          - "show bfd session"  (NOT "show bfd sessions")
+          - "show route"  (NOT "show ip route")
+          - "show interfaces terse"  (NOT "show interfaces brief")
+        If a result has result="commandShellError", read the llm_hint field, look up the correct
+        syntax with get_junos_show_commands, and retry with corrected commands.
 
-        Command format
-        --------------
-        Pass standard JunOS CLI commands exactly as you would type them on the
-        device.  Examples:
-          - "show version"
-          - "show bgp summary"
-          - "show bgp neighbor <peer-ip>"
-          - "show bfd session"
-          - "show interfaces ge-0/0/0 detail"
-          - "show route table inet.0 summary"
+        Omit system_id to run across the whole blueprint concurrently (can produce a large
+        response on large fabrics — scope to a specific system when possible).
 
-        JunOS CLI differences from other vendors:
-          - Use "show bgp summary" or "show bgp neighbor <ip>", NOT "show bgp neighbors"
-          - Use "show bfd session", NOT "show bfd sessions"
-          - Use "show route", NOT "show ip route"
-          - Use "show interfaces terse", NOT "show interfaces brief"
-          - Use "show ethernet-switching table" for L2 MAC tables
-
-        For JSON-structured output on commands that support it, set
-        output_format="json".  Most operational commands support JSON; use
-        output_format="text" (the default) for commands that do not.
-
-        commandShellError — syntax errors
-        ----------------------------------
-        If a command result contains result="commandShellError", the JunOS CLI
-        rejected the command syntax.  This is NOT a connectivity problem — it
-        means the command text was malformed.  When this happens:
-          1. Read the syntax_error=True and llm_hint fields in the result.
-          2. Call get_junos_show_commands to look up the correct syntax.
-          3. Correct the command and retry — do NOT call this tool again
-             with the same command text unchanged.
-
-        All-systems mode
-        ----------------
-        Omit system_id to run the same commands on every onboarded switch in
-        the blueprint concurrently.  This is fast (parallel execution) but
-        produces a large response for large fabrics.  Be specific about which
-        commands you actually need rather than running broad commands on all
-        systems simultaneously.
-
-        Use get_systems to discover valid system_id values (hardware chassis
-        serial numbers such as "5254002D005F").
-
-        Args:
-            blueprint_id:    The Apstra blueprint the target system(s) belong to.
-            commands:        List of CLI commands to run. Each command is run as
-                             a separate request in fallback mode, or batched in
-                             newer Apstra versions.
-            system_id:       Optional. Hardware chassis serial of the target
-                             switch. If omitted, commands run on all onboarded
-                             switches in the blueprint.
-            output_format:   "json" (default) for structured Junos JSON output.
-                             Use "text" for raw CLI output or for commands that
-                             do not support display json.
-            timeout_seconds: How long to wait for each system's commands to
-                             complete before returning a "timeout" status.
-                             Default 30 seconds. Increase for slow commands such
-                             as "show route" on large tables.
-            max_concurrent_systems: Maximum number of switches to query at the
-                             same time. Default 10. Hard-capped at 20 regardless
-                             of this value. Decrease if the Apstra instance is
-                             under load. Only applies when system_id is omitted.
-            instance_name:   Optional. The Apstra instance to query (as defined
-                             in instances.yaml). If omitted, all instances are
-                             queried and results are merged.
-
-        Returns:
-            When querying a single instance:
-              - instance: name of the Apstra instance queried
-              - blueprint_id: the blueprint queried
-              - systems: list of per-system result objects, each with:
-                  system_id    — hardware chassis serial
-                  system_label — human-readable device name
-                  endpoint     — "multiple" or "single" (which API was used)
-                  status       — "success", "error", or "timeout"
-                  command_results — list of command outputs (batch mode), or
-                                    structured per-command results (single mode)
-                                    each with: command, status, output, error
-                  raw          — raw API response (batch mode only)
-                  error        — error message if status is "error"
-              - system_count: number of systems in the results list
-
-            When querying all instances:
-              - instance: "all"
-              - blueprint_id: the blueprint queried
-              - results: list of per-instance result objects (same shape)
-              - total_system_count: sum of systems across all instances
-
-        Note: "all systems" runs commands concurrently across all switches and
-        can generate a very large response on large fabrics.  Prefer scoping to
-        a specific system_id when possible, or filter to only the commands you
-        actually need.
+        Returns: systems (list with system_id, system_label, endpoint, status, command_results
+        (list with command, status, output, error)), system_count.
+        Data source: live Apstra fetchcmd API (real-time device CLI).
         """
         return await handle_run_commands(
             ctx.lifespan_context["sessions"],

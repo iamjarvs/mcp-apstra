@@ -323,8 +323,9 @@ class TestGetTopErrorGrowers:
             (10, 0),
             (5, 0),  # no change
         ])
+        # Clean interfaces (no errors) are filtered out by get_top_error_growers
         results = store.get_top_error_growers("dc", hours_back=168)
-        assert results[0]["has_any_errors"] is False
+        assert results == []
 
     def test_error_rate_per_hour_is_nonzero(self):
         store = make_store()

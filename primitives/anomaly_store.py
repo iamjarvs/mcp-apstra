@@ -497,7 +497,7 @@ class AnomalyStore:
     def get_trend_buckets(
         self,
         blueprint_id: str,
-        anomaly_type: str,
+        anomaly_type: str | None,
         since: str,
         bucket_minutes: int = 60,
         instance_name: str | None = None,
@@ -505,9 +505,13 @@ class AnomalyStore:
         """
         Return raise and clear counts grouped into time buckets per device.
         bucket_minutes must evenly divide 1440 (minutes per day).
+        When anomaly_type is None, returns data for all anomaly types.
         """
-        where = ["a.blueprint_id = ?", "a.anomaly_type = ?", "e.timestamp >= ?"]
-        params: list = [blueprint_id, anomaly_type, since]
+        where = ["a.blueprint_id = ?", "e.timestamp >= ?"]
+        params: list = [blueprint_id, since]
+        if anomaly_type is not None:
+            where.append("a.anomaly_type = ?")
+            params.append(anomaly_type)
         if instance_name:
             where.append("a.instance_name = ?")
             params.append(instance_name)

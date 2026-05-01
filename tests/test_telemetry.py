@@ -126,7 +126,7 @@ async def test_counter_interface_name_filter(tools):
     ctx = make_ctx([session])
     with patch("tools.telemetry.live_data_client.get_interface_counters", new=AsyncMock(return_value=COUNTERS_RAW)):
         result = await tools["get_interface_counters"](
-            system_id="AABBCC001122", interface="ge-0/0/0", ctx=ctx
+            system_id="AABBCC001122", interface_name="ge-0/0/0", ctx=ctx
         )
     assert result["interface_count"] == 1
     assert result["interfaces"][0]["interface_name"] == "ge-0/0/0"
@@ -313,7 +313,7 @@ async def test_utilisation_interface_filter(tools):
     with patch("tools.telemetry.live_data_client.get_probes", new=AsyncMock(return_value=PROBE_LIST_RAW)), \
          patch("tools.telemetry.live_data_client.query_probe_stage", new=AsyncMock(return_value=UTILISATION_RAW)):
         result = await tools["get_interface_utilisation"](
-            blueprint_id="bp-001", interface="ge-0/0/1", top_n=0, ctx=ctx
+            blueprint_id="bp-001", interface_name="ge-0/0/1", top_n=0, ctx=ctx
         )
     assert result["interface_count"] == 1
     assert result["interfaces"][0]["interface"] == "ge-0/0/1"

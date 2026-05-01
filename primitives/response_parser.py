@@ -177,18 +177,69 @@ def parse_blueprints(raw: dict) -> list:
 def parse_anomalies(raw: dict) -> list:
     """
     Normalises a raw Apstra anomaly API response into a flat list of dicts.
-    Each item contains: severity, type, description, affected_node.
+
+    The Apstra anomaly API returns items with this structure:
+      {
+        "anomaly_type": "bgp",
+        "severity": "critical",
+        "role": "spine_leaf",
+        "last_modified_at": "2026-05-01T10:00:00Z",
+        "identity": {
+          "system_id": "525400708DCE",
+          "source_ip": "192.168.0.6",
+          "destination_ip": "192.168.0.7",
+          "source_asn": "64513",
+          "destination_asn": "64514",
+          "destination_name": "Leaf1",
+          "addr_family": "ipv4",
+          "vrf_name": "default"
+        },
+        "expected": {"value": "up"},
+        "actual": {"value": "down"}
+      }
     """
     items = raw.get("items", [])
-    return [
-        {
+    result = []
+    for item in items:
+        identity = item.get("identity") or {}
+        expected = item.get("expected") or {}
+        actual = item.get("actual") or {}
+        system_id = identity.get("system_id", "unknown")
+        anomaly_type = item.get("anomaly_type", "unknown")
+
+        # Build a human-readable description from available identity fields
+        dest_name = identity.get("destination_name") or identity.get("destination_ip")
+        if dest_name:
+            description = (
+                f"{anomaly_type} session to {dest_name}"
+                f" (expected={expected.get('value', '?')},"
+                f" actual={actual.get('value', '?')})"
+            )
+        elif identity.get("interface"):
+            description = (
+                f"{anomaly_type} on {identity['interface']}"
+                f" (expected={expected.get('value', '?')},"
+                f" actual={actual.get('value', '?')})"
+            )
+        else:
+            description = (
+                f"{anomaly_type}"
+                f" (expected={expected.get('value', '?')},"
+                f" actual={actual.get('value', '?')})"
+            )
+
+        result.append({
             "severity": item.get("severity", "unknown"),
-            "type": item.get("anomaly_type", "unknown"),
-            "description": item.get("description", ""),
-            "affected_node": item.get("system_id", "unknown"),
-        }
-        for item in items
-    ]
+            "type": anomaly_type,
+            "description": description,
+            "affected_node": system_id,
+            "role": item.get("role"),
+            "last_modified_at": item.get("last_modified_at"),
+            "identity": identity,
+            "expected": expected.get("value"),
+            "actual": actual.get("value"),
+        })
+    return result
 
 
 def parse_virtual_networks(rows: list) -> list:

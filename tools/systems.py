@@ -52,7 +52,7 @@ def register(mcp):
         registry = ctx.lifespan_context["graph_registry"]
         blu_list = await resolve_blueprints(sessions, blueprint_id)
         if not blu_list:
-            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+            return {"error": f"No blueprints found matching '{blueprint_id}'", "hint": "Call get_blueprints to list available blueprints and their labels."}
 
         if len(blu_list) > 1:
             results = []

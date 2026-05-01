@@ -20,8 +20,20 @@ RAW_RESPONSE = {
         {
             "severity": "critical",
             "anomaly_type": "bgp",
-            "description": "BGP session down",
-            "system_id": "spine-1",
+            "role": "spine_leaf",
+            "last_modified_at": "2026-05-01T10:00:00Z",
+            "identity": {
+                "system_id": "spine-1",
+                "source_ip": "192.168.0.1",
+                "destination_ip": "192.168.0.2",
+                "destination_name": "Leaf1",
+                "source_asn": "64513",
+                "destination_asn": "64514",
+                "addr_family": "ipv4",
+                "vrf_name": "default",
+            },
+            "expected": {"value": "up"},
+            "actual": {"value": "down"},
         }
     ]
 }
@@ -30,8 +42,22 @@ PARSED_ANOMALIES = [
     {
         "severity": "critical",
         "type": "bgp",
-        "description": "BGP session down",
+        "description": "bgp session to Leaf1 (expected=up, actual=down)",
         "affected_node": "spine-1",
+        "role": "spine_leaf",
+        "last_modified_at": "2026-05-01T10:00:00Z",
+        "identity": {
+            "system_id": "spine-1",
+            "source_ip": "192.168.0.1",
+            "destination_ip": "192.168.0.2",
+            "destination_name": "Leaf1",
+            "source_asn": "64513",
+            "destination_asn": "64514",
+            "addr_family": "ipv4",
+            "vrf_name": "default",
+        },
+        "expected": "up",
+        "actual": "down",
     }
 ]
 
@@ -49,7 +75,7 @@ class TestParseAnomalies:
         result = parse_anomalies({"items": [{}]})
         assert result[0]["severity"] == "unknown"
         assert result[0]["type"] == "unknown"
-        assert result[0]["description"] == ""
+        assert "unknown" in result[0]["description"]
         assert result[0]["affected_node"] == "unknown"
 
     def test_empty_items_list(self):
@@ -61,8 +87,8 @@ class TestParseAnomalies:
     def test_multiple_items(self):
         raw = {
             "items": [
-                {"severity": "critical", "anomaly_type": "bgp", "description": "d1", "system_id": "n1"},
-                {"severity": "warning", "anomaly_type": "lldp", "description": "d2", "system_id": "n2"},
+                {"severity": "critical", "anomaly_type": "bgp", "identity": {"system_id": "n1"}},
+                {"severity": "warning", "anomaly_type": "lldp", "identity": {"system_id": "n2"}},
             ]
         }
         result = parse_anomalies(raw)

@@ -18,13 +18,12 @@ async def resolve_blueprints(sessions, blueprint_ref: str | None) -> list[dict]:
 
     Rules:
       None / "all"   → all blueprints from all sessions
-      UUID string    → [{id: ref, label: None, instance_name: None}] without API call
+      UUID string    → exact match by ID (label populated from API)
       partial label  → case-insensitive substring match (e.g. "DC1" matches "DC1 - SE Demo")
 
     Returns an empty list if a partial label matches nothing.
     """
-    if blueprint_ref and _UUID_RE.match(blueprint_ref):
-        return [{"id": blueprint_ref, "label": None, "instance_name": None}]
+    is_uuid = blueprint_ref and _UUID_RE.match(blueprint_ref)
 
     all_bps: list[dict] = []
     for session in sessions:
@@ -39,13 +38,21 @@ async def resolve_blueprints(sessions, blueprint_ref: str | None) -> list[dict]:
         except Exception:
             pass
 
-    ref = (blueprint_ref or "").strip().lower()
-    if not ref or ref == "all":
-        return all_bps
-
     if not all_bps:
         # Could not reach any instance — treat as literal ID (best-effort fallback)
         return [{"id": blueprint_ref, "label": blueprint_ref, "instance_name": None}]
+
+    if is_uuid:
+        # Exact UUID match with label populated from API data
+        matched = [bp for bp in all_bps if bp["id"].lower() == blueprint_ref.lower()]
+        if matched:
+            return matched
+        # UUID not found in any instance — return with ID as label (best-effort)
+        return [{"id": blueprint_ref, "label": blueprint_ref, "instance_name": None}]
+
+    ref = (blueprint_ref or "").strip().lower()
+    if not ref or ref == "all":
+        return all_bps
 
     matched = [bp for bp in all_bps if ref in bp["label"].lower()]
     return matched

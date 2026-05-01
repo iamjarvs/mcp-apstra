@@ -115,7 +115,8 @@ RETURN *
 
 # Intra-fabric eBGP peerings for a specific device, identified by hostname or
 # label. The anchor (sy_a) is always the named device; sy_b is always its peer.
-# No deduplication is needed because the anchor fixes one side of the session.
+# WHERE int_a.id <> int_b.id excludes self-referential rows that Kuzu can
+# produce when both sides of a link__rel edge satisfy the pattern from one node.
 _FABRIC_PEERING_QUERY_DEVICE = """
 MATCH (sy_a:system)
 WHERE (sy_a.label = $device OR sy_a.hostname = $device) AND sy_a.external = false
@@ -123,6 +124,7 @@ MATCH (sy_a)-[:hosted_interfaces]->(int_a:interface {if_type: 'ip', protocols: '
 -[:link__rel]->(link:link)
 <-[:link__rel]-(int_b:interface {if_type: 'ip', protocols: 'ebgp'})
 <-[:hosted_interfaces]-(sy_b:system {external: false})
+WHERE int_a.id <> int_b.id
 MATCH (asn_a:domain)-[:composed_of_systems]->(sy_a)
 MATCH (asn_b:domain)-[:composed_of_systems]->(sy_b)
 RETURN *

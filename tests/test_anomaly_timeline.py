@@ -596,7 +596,9 @@ class TestGetAnomalyEventsTool:
 
         store = make_store()
         aid = store.upsert_anomaly(BP, INST, BGP_A)
-        store.insert_event(aid, "2026-04-09T12:00:00Z", raised=True, actual={"value": "down"}, source="t")
+        from datetime import datetime, timezone, timedelta
+        recent_ts = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        store.insert_event(aid, recent_ts, raised=True, actual={"value": "down"}, source="t")
 
         # Import and call the handler function directly rather than going through MCP
         from tools.anomaly_timeline import register as reg_fn

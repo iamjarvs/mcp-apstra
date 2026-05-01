@@ -9,6 +9,7 @@ Tests for:
 
 import json
 import tempfile
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -38,6 +39,13 @@ def make_store() -> AnomalyStore:
 
 BP   = "bp-001"
 INST = "dc-primary"
+
+
+def _ts(minutes_ago: int = 120) -> str:
+    """Return an ISO timestamp from the recent past (within the 168-hour window)."""
+    return (datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
 
 
 def _raise(atype, device, ts, identity=None, expected=None, role=None):
@@ -658,23 +666,28 @@ class TestGetCorrelatedFaultsTool:
     async def test_bilateral_bgp_dedup(self):
         from tools.anomaly_analytics import register
 
+        # Use recent timestamps so events fall within the 168-hour look-back window.
+        now = datetime.now(timezone.utc)
+        ts1 = (now - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts2 = (now - timedelta(hours=2) + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
         store = make_store()
         leaf_a = {
             "anomaly_type": "bgp", "device_hostname": "Leaf1", "role": "spine_leaf",
             "identity": {"source_ip": "10.0.0.1", "destination_ip": "10.0.0.2",
                          "addr_family": "ipv4", "vrf_name": "default"},
-            "expected": {"value": "up"}, "actual": None, "detected_at": "2026-04-08T10:00:00Z",
+            "expected": {"value": "up"}, "actual": None, "detected_at": ts1,
         }
         spine_a = {
             "anomaly_type": "bgp", "device_hostname": "Spine1", "role": "spine_leaf",
             "identity": {"source_ip": "10.0.0.2", "destination_ip": "10.0.0.1",
                          "addr_family": "ipv4", "vrf_name": "default"},
-            "expected": {"value": "up"}, "actual": None, "detected_at": "2026-04-08T10:00:01Z",
+            "expected": {"value": "up"}, "actual": None, "detected_at": ts2,
         }
         id1 = store.upsert_anomaly(BP, INST, leaf_a)
         id2 = store.upsert_anomaly(BP, INST, spine_a)
-        store.insert_event(id1, "2026-04-10T10:00:00Z", raised=True, actual=None, source="t")
-        store.insert_event(id2, "2026-04-10T10:00:01Z", raised=True, actual=None, source="t")
+        store.insert_event(id1, ts1, raised=True, actual=None, source="t")
+        store.insert_event(id2, ts2, raised=True, actual=None, source="t")
 
         stub = StubMCP()
         register(stub)
@@ -707,8 +720,8 @@ class TestGetFaultDurationsTool:
         store = make_store()
         a = _make_anomaly("bgp", "Leaf1")
         aid = store.upsert_anomaly(BP, INST, a)
-        store.insert_event(aid, "2026-04-10T10:00:00Z", raised=True,  actual=None, source="t")
-        store.insert_event(aid, "2026-04-10T10:05:00Z", raised=False, actual=None, source="t")
+        store.insert_event(aid, _ts(120), raised=True,  actual=None, source="t")
+        store.insert_event(aid, _ts(115), raised=False, actual=None, source="t")
 
         stub = StubMCP()
         register(stub)
@@ -728,7 +741,7 @@ class TestGetFaultDurationsTool:
         store = make_store()
         a = _make_anomaly("bgp", "Leaf1")
         aid = store.upsert_anomaly(BP, INST, a)
-        store.insert_event(aid, "2026-04-10T10:00:00Z", raised=True, actual=None, source="t")
+        store.insert_event(aid, _ts(120), raised=True, actual=None, source="t")
 
         stub = StubMCP()
         register(stub)
@@ -749,10 +762,10 @@ class TestGetFaultDurationsTool:
         a2 = {**_make_anomaly("bgp", "Leaf2"), "identity": {"system_id": "SYS2"}}
         id1 = store.upsert_anomaly(BP, INST, a1)
         id2 = store.upsert_anomaly(BP, INST, a2)
-        store.insert_event(id1, "2026-04-10T10:00:00Z", raised=True,  actual=None, source="t")
-        store.insert_event(id1, "2026-04-10T10:01:00Z", raised=False, actual=None, source="t")  # 60s
-        store.insert_event(id2, "2026-04-10T10:00:00Z", raised=True,  actual=None, source="t")
-        store.insert_event(id2, "2026-04-10T10:30:00Z", raised=False, actual=None, source="t")  # 1800s
+        store.insert_event(id1, _ts(120), raised=True,  actual=None, source="t")
+        store.insert_event(id1, _ts(119), raised=False, actual=None, source="t")  # 60s
+        store.insert_event(id2, _ts(120), raised=True,  actual=None, source="t")
+        store.insert_event(id2, _ts(90),  raised=False, actual=None, source="t")  # 1800s
 
         stub = StubMCP()
         register(stub)
@@ -774,9 +787,7 @@ class TestGetDeviceAnomalyHeatmapTool:
         id1 = store.upsert_anomaly(BP, INST, a1)
         id2 = store.upsert_anomaly(BP, INST, a2)
         id3 = store.upsert_anomaly(BP, INST, a3)
-        for aid, ts in [(id1, "2026-04-10T10:00:00Z"),
-                        (id2, "2026-04-10T10:01:00Z"),
-                        (id3, "2026-04-10T10:02:00Z")]:
+        for aid, ts in [(id1, _ts(120)), (id2, _ts(119)), (id3, _ts(118))]:
             store.insert_event(aid, ts, raised=True, actual=None, source="t")
 
         stub = StubMCP()
@@ -799,8 +810,8 @@ class TestGetDeviceAnomalyHeatmapTool:
         a2 = _make_anomaly("bgp",     "Leaf1")
         id1 = store.upsert_anomaly(BP, INST, a1)
         id2 = store.upsert_anomaly(BP, INST, a2)
-        store.insert_event(id1, "2026-04-10T10:00:00Z", raised=True, actual=None, source="t")
-        store.insert_event(id2, "2026-04-10T10:00:01Z", raised=True, actual=None, source="t")
+        store.insert_event(id1, _ts(120), raised=True, actual=None, source="t")
+        store.insert_event(id2, _ts(119), raised=True, actual=None, source="t")
 
         stub = StubMCP()
         register(stub)
@@ -835,10 +846,7 @@ class TestCorrelateAnomalyEventsTool:
         a3 = _make_anomaly("interface", "Leaf1", "2026-04-10T10:00:04Z")
         # Distant event — should be a separate cluster
         a4 = _make_anomaly("mac",       "Leaf2", "2026-04-10T14:00:00Z")
-        for a, ts in [(a1, "2026-04-10T10:00:00Z"),
-                      (a2, "2026-04-10T10:00:02Z"),
-                      (a3, "2026-04-10T10:00:04Z"),
-                      (a4, "2026-04-10T14:00:00Z")]:
+        for a, ts in [(a1, _ts(720)), (a2, _ts(719)), (a3, _ts(718)), (a4, _ts(480))]:
             aid = store.upsert_anomaly(BP, INST, a)
             store.insert_event(aid, ts, raised=True, actual=None, source="t")
 
@@ -863,8 +871,8 @@ class TestCorrelateAnomalyEventsTool:
         a2 = _make_anomaly("bgp",     "Leaf1", "2026-04-10T10:00:02Z")
         id1 = store.upsert_anomaly(BP, INST, a1)
         id2 = store.upsert_anomaly(BP, INST, a2)
-        store.insert_event(id1, "2026-04-10T10:00:00Z", raised=True, actual=None, source="t")
-        store.insert_event(id2, "2026-04-10T10:00:02Z", raised=True, actual=None, source="t")
+        store.insert_event(id1, _ts(120), raised=True, actual=None, source="t")
+        store.insert_event(id2, _ts(119), raised=True, actual=None, source="t")
 
         stub = StubMCP()
         register(stub)
@@ -921,8 +929,8 @@ class TestCorrelateAnomalyEventsTool:
         a2 = _make_anomaly("bgp",      "Leaf1")
         id1 = store.upsert_anomaly(BP, INST, a1)
         id2 = store.upsert_anomaly(BP, INST, a2)
-        store.insert_event(id1, "2026-04-10T10:00:00Z", raised=True, actual=None, source="t")
-        store.insert_event(id2, "2026-04-10T10:00:05Z", raised=True, actual=None, source="t")
+        store.insert_event(id1, _ts(120), raised=True, actual=None, source="t")
+        store.insert_event(id2, _ts(119), raised=True, actual=None, source="t")
 
         stub = StubMCP()
         register(stub)
