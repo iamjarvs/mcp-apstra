@@ -3,6 +3,7 @@ from typing import Annotated
 from fastmcp import Context
 from pydantic import Field
 
+from handlers.blueprints import resolve_blueprints
 from handlers.virtual_networks import (
     handle_get_virtual_networks,
     handle_get_virtual_network_list,
@@ -33,6 +34,13 @@ def register(mcp):
     async def get_vn_deployments(
         blueprint_id: Annotated[str, Field(description=_BP_DESC_REQ)],
         system_id: Annotated[str | None, Field(default=None, description=_SYS_DESC)] = None,
+        vn_label: Annotated[
+            str | None,
+            Field(default=None, description=(
+                "Filter to a specific virtual network by label (e.g. 'Web_Prod'). "
+                "Case-insensitive substring match. Omit to return all VN deployments."
+            )),
+        ] = None,
         instance_name: Annotated[str | None, Field(default=None, description=_INST_DESC)] = None,
         ctx: Context = None,
     ) -> dict:
@@ -44,19 +52,34 @@ def register(mcp):
         on Leaf1 vs Leaf2. For the full VN design intent (IP config, anycast gateway) use
         get_virtual_network_detail instead.
 
-        Pass system_id to scope to one switch. Pass blueprint_id=null for all blueprints.
+        Pass system_id to scope to one switch. Pass vn_label to filter to a specific VN.
+        Pass blueprint_id=null for all blueprints.
 
         Returns: vn_instances (list with sw_id, sw_label, vlan_id, vni_id, ipv4_enabled,
         ipv4_mode, dhcp_enabled, vn_id, vn_label, vn_type, vni_number, ipv4_subnet), count.
         Data source: graph database (auto-rebuilt when blueprint version changes).
         """
-        return await handle_get_virtual_networks(
-            ctx.lifespan_context["sessions"],
-            ctx.lifespan_context["graph_registry"],
-            blueprint_id,
-            system_id,
-            instance_name,
-        )
+        sessions = ctx.lifespan_context["sessions"]
+        blu_list = await resolve_blueprints(sessions, blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        results = []
+        for bp in blu_list:
+            r = await handle_get_virtual_networks(
+                sessions, ctx.lifespan_context["graph_registry"],
+                bp["id"], system_id, instance_name,
+            )
+            # Apply vn_label filter if requested
+            if vn_label and "vn_instances" in r:
+                vn_label_lower = vn_label.lower()
+                r["vn_instances"] = [
+                    inst for inst in r["vn_instances"]
+                    if vn_label_lower in (inst.get("vn_label") or "").lower()
+                ]
+                r["count"] = len(r["vn_instances"])
+                r["filter_vn_label"] = vn_label
+            results.append(r)
+        return results[0] if len(results) == 1 else {"blueprint_count": len(results), "results": results}
 
     @mcp.tool()
     async def get_virtual_networks(
@@ -77,12 +100,18 @@ def register(mcp):
         routing_zone_label, vrf_name, routing_zone_type), count.
         Data source: graph database (auto-rebuilt when blueprint version changes).
         """
-        return await handle_get_virtual_network_list(
-            ctx.lifespan_context["sessions"],
-            ctx.lifespan_context["graph_registry"],
-            blueprint_id,
-            instance_name,
-        )
+        sessions = ctx.lifespan_context["sessions"]
+        blu_list = await resolve_blueprints(sessions, blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        results = []
+        for bp in blu_list:
+            r = await handle_get_virtual_network_list(
+                sessions, ctx.lifespan_context["graph_registry"],
+                bp["id"], instance_name,
+            )
+            results.append(r)
+        return results[0] if len(results) == 1 else {"blueprint_count": len(results), "results": results}
 
     @mcp.tool()
     async def get_routing_zones(
@@ -101,12 +130,18 @@ def register(mcp):
         (l3_fabric / evpn), vn_count), count.
         Data source: graph database (auto-rebuilt when blueprint version changes).
         """
-        return await handle_get_routing_zones(
-            ctx.lifespan_context["sessions"],
-            ctx.lifespan_context["graph_registry"],
-            blueprint_id,
-            instance_name,
-        )
+        sessions = ctx.lifespan_context["sessions"]
+        blu_list = await resolve_blueprints(sessions, blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        results = []
+        for bp in blu_list:
+            r = await handle_get_routing_zones(
+                sessions, ctx.lifespan_context["graph_registry"],
+                bp["id"], instance_name,
+            )
+            results.append(r)
+        return results[0] if len(results) == 1 else {"blueprint_count": len(results), "results": results}
 
     @mcp.tool()
     async def get_routing_zone_detail(
@@ -134,13 +169,18 @@ def register(mcp):
         (list with sw_id, sw_label, sw_role), vn_count, system_count.
         Data source: graph database (auto-rebuilt when blueprint version changes).
         """
-        return await handle_get_routing_zone_detail(
-            ctx.lifespan_context["sessions"],
-            ctx.lifespan_context["graph_registry"],
-            blueprint_id,
-            routing_zone,
-            instance_name,
-        )
+        sessions = ctx.lifespan_context["sessions"]
+        blu_list = await resolve_blueprints(sessions, blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        results = []
+        for bp in blu_list:
+            r = await handle_get_routing_zone_detail(
+                sessions, ctx.lifespan_context["graph_registry"],
+                bp["id"], routing_zone, instance_name,
+            )
+            results.append(r)
+        return results[0] if len(results) == 1 else {"blueprint_count": len(results), "results": results}
 
     @mcp.tool()
     async def get_virtual_network_detail(
@@ -170,10 +210,15 @@ def register(mcp):
         dhcp_enabled), deployed_count.
         Data source: graph database (auto-rebuilt when blueprint version changes).
         """
-        return await handle_get_virtual_network_detail(
-            ctx.lifespan_context["sessions"],
-            ctx.lifespan_context["graph_registry"],
-            blueprint_id,
-            virtual_network,
-            instance_name,
-        )
+        sessions = ctx.lifespan_context["sessions"]
+        blu_list = await resolve_blueprints(sessions, blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        results = []
+        for bp in blu_list:
+            r = await handle_get_virtual_network_detail(
+                sessions, ctx.lifespan_context["graph_registry"],
+                bp["id"], virtual_network, instance_name,
+            )
+            results.append(r)
+        return results[0] if len(results) == 1 else {"blueprint_count": len(results), "results": results}

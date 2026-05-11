@@ -1,33 +1,50 @@
 # apstra-mcp
 
-A [FastMCP](https://github.com/jlowin/fastmcp) server that exposes Juniper Apstra data centre network management capabilities as tools for LLM agents. Connect Claude, Cursor, or any MCP-compatible AI assistant directly to your Apstra fabric — query anomalies, inspect BGP peerings, audit MTU, diff configlets, and run CLI commands across entire fabrics in parallel.
+A FastMCP server for Juniper Apstra network operations and troubleshooting.
 
-Supports multiple Apstra instances simultaneously. Clean three-layer architecture: MCP tool registration → business logic handlers → shared primitives.
+This server is read-only. It lets MCP clients (Claude Desktop, VS Code Copilot, Cursor, and others) query live Apstra state, inspect design intent, run JunOS show commands through Apstra, analyze anomaly timelines, and troubleshoot commit blockers.
 
----
+Current codebase scope (May 2026): compact-by-default MCP tool surface with umbrella dispatchers for anomaly, telemetry, VN/VRF, and probes. Set `MCP_TOOL_SURFACE=full` to expose all granular legacy tools.
 
 ## Table of contents
 
-- [Claude Desktop (quick install)](#claude-desktop-quick-install)
-- [What this does](#what-this-does)
-- [Quick start (local dev)](#quick-start-local-dev)
+- [What changed recently](#what-changed-recently)
+- [Quick install](#quick-install)
+- [Local development quick start](#local-development-quick-start)
 - [Configuration](#configuration)
 - [Running the server](#running-the-server)
-- [Available tools](#available-tools)
+- [Recommended troubleshooting flow](#recommended-troubleshooting-flow)
+- [Tool catalog (full surface)](#tool-catalog-full-surface)
 - [Architecture](#architecture)
-- [Data sources](#data-sources)
+- [Data sources and freshness](#data-sources-and-freshness)
 - [Testing](#testing)
 - [Project structure](#project-structure)
+- [Requirements](#requirements)
 
----
+## What changed recently
 
-## Claude Desktop (quick install)
+- Expanded from a smaller core toolset to 48 tools.
+- Added anomaly timeline and analytics workflows backed by local stores.
+- Added probe tooling: `get_probe_list`, `get_probe_detail`, `get_probe_history`.
+- Added telemetry trend tooling: `get_interface_error_trend`, `get_top_error_growers`.
+- Added reference-guide token optimization flow:
+  - `get_reference_design_overview`
+  - `get_reference_design_section`
+  - `get_junos_command_categories`
+  - `get_junos_show_commands`
+- Added blueprint commit troubleshooting:
+  - `get_blueprint_build_errors` uses digest-first checks and only fetches full error payloads when needed.
+- Added discover-first routing policy diagnostics:
+  - `routing_policy` dispatcher (`discover`, `peer_summary`, `explain_policy`, `diagnose_hidden_routes`, `compare_rib`, `resolve_next_hop`, `full_audit`)
+- Added compact umbrella dispatchers:
+  - `anomaly`, `telemetry`, `virtual_networks`, `probes`
+  - Use `MCP_TOOL_SURFACE=full` for legacy per-function tool exposure.
 
-The fastest way to use this server — no cloning or virtual environments needed. [uv](https://docs.astral.sh/uv/) manages the install automatically.
+## Quick install
 
-### Option 1 — single Apstra instance (recommended for most users)
+### Claude Desktop
 
-All configuration is provided as environment variables directly in the Claude Desktop config. No files to edit.
+#### Option 1: single Apstra instance
 
 ```json
 {
@@ -45,23 +62,11 @@ All configuration is provided as environment variables directly in the Claude De
 }
 ```
 
-**All available env vars for single-instance mode:**
+#### Option 2: multiple Apstra instances via YAML
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `APSTRA_HOST` | yes | — | Full URL of your Apstra controller, e.g. `https://apstra.example.com` |
-| `APSTRA_USERNAME` | yes | — | Login username |
-| `APSTRA_PASSWORD` | yes | — | Login password |
-| `APSTRA_SSL_VERIFY` | no | `false` | Set to `true` if your controller has a valid CA-signed certificate. Most Apstra deployments use self-signed certs so this defaults to `false` |
-| `APSTRA_INSTANCE_NAME` | no | `default` | Friendly label for this instance, shown in tool responses |
-| `MCP_VERBOSE` | no | _(unset)_ | Set to `1` for operational logging or `2` for full debug logging |
-
-### Option 2 — multiple Apstra instances
-
-Create an `instances.yaml` file anywhere on your machine (e.g. `~/.apstra/instances.yaml`) and point the server at it:
+`~/.apstra/instances.yaml`:
 
 ```yaml
-# ~/.apstra/instances.yaml
 instances:
   - name: dc-primary
     host: https://apstra-prod.example.com
@@ -76,7 +81,7 @@ instances:
     ssl_verify: false
 ```
 
-Then reference it in your Claude Desktop config:
+Claude config:
 
 ```json
 {
@@ -92,70 +97,110 @@ Then reference it in your Claude Desktop config:
 }
 ```
 
-Credentials in the YAML file can be overridden per-instance with environment variables — useful if you prefer not to store passwords in the file:
+Per-instance credential overrides are supported:
 
 ```bash
-# Pattern: APSTRA_{NAME_UPPERCASED}_USERNAME / _PASSWORD
-# Hyphens in the name become underscores.
 APSTRA_DC_PRIMARY_USERNAME=admin
 APSTRA_DC_PRIMARY_PASSWORD=secretpassword
 ```
 
-### Where is claude_desktop_config.json?
+`dc-primary` becomes `APSTRA_DC_PRIMARY_*` (uppercase, hyphens converted to underscores).
+
+#### Claude config location
 
 | OS | Path |
-|----|------|
+|---|---|
 | macOS | `~/Library/Application Support/Claude/claude_desktop_config.json` |
 | Windows | `%APPDATA%\Claude\claude_desktop_config.json` |
 
-Restart Claude Desktop after saving changes.
+### VS Code + GitHub Copilot
 
----
+Create `.vscode/mcp.json`:
 
-## What this does
-
-Apstra is a data centre network management platform that maintains a graph database of network design intent, collects live telemetry from devices, and tracks the difference between staged (planned) and active (deployed) network state. This MCP server makes those data sources available to an LLM as callable tools.
-
-An AI assistant with this server connected can answer questions like:
-
-- *"Are there any active anomalies in the production fabric right now?"*
-- *"Show me all BGP peerings from Leaf-01 to external systems"*
-- *"Which configlets applied to blueprint dc-prod have drifted from the design catalogue?"*
-- *"Run `show version` across every switch in the fabric and tell me if any are running an older OS version"*
-- *"Check the MTU configuration and flag any mismatches that would break VXLAN"*
-
----
-
-## Quick start (local dev)
-
-```bash
-# 1. Clone and enter the repo
-git clone git@github.com:iamjarvs/mcp-apstra.git
-cd mcp-apstra
-
-# 2. Create a virtual environment
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-
-# 3. Install dependencies
-pip install -e ".[dev]"
-
-# 4. Configure your Apstra instance(s)
-cp config/instances.yaml.example config/instances.yaml
-# Edit config/instances.yaml with your host, username, and password
-
-# 5. Verify auth before starting the server
-python auth_test.py
-
-# 6. Run the server
-fastmcp run server.py
+```json
+{
+  "servers": {
+    "apstra": {
+      "command": "uvx",
+      "args": ["apstra-mcp"],
+      "env": {
+        "APSTRA_HOST": "https://apstra.example.com",
+        "APSTRA_USERNAME": "admin",
+        "APSTRA_PASSWORD": "secretpassword"
+      }
+    }
+  }
+}
 ```
 
----
+For multi-instance:
+
+```json
+{
+  "servers": {
+    "apstra": {
+      "command": "uvx",
+      "args": ["apstra-mcp"],
+      "env": {
+        "APSTRA_CONFIG_FILE": "/Users/yourname/.apstra/instances.yaml"
+      }
+    }
+  }
+}
+```
+
+### Run from local source with uvx
+
+```json
+{
+  "mcpServers": {
+    "apstra": {
+      "command": "uvx",
+      "args": [
+        "--from", "/absolute/path/to/v2_apstra-mcp-server-v2",
+        "apstra-mcp"
+      ],
+      "env": {
+        "APSTRA_HOST": "https://apstra.example.com",
+        "APSTRA_USERNAME": "admin",
+        "APSTRA_PASSWORD": "secretpassword"
+      }
+    }
+  }
+}
+```
+
+After code changes:
+
+```bash
+uvx --from /absolute/path/to/v2_apstra-mcp-server-v2 --reinstall apstra-mcp
+```
+
+## Local development quick start
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+cp config/instances.yaml.example config/instances.yaml
+# edit config/instances.yaml
+
+python auth_test.py
+python server.py
+```
+
+For stdio MCP clients, `fastmcp run server.py` also works.
 
 ## Configuration
 
-Edit `config/instances.yaml`. An example file is provided at `config/instances.yaml.example`:
+Configuration resolution order in code:
+
+1. `APSTRA_CONFIG_FILE` (explicit YAML path)
+2. `config/instances.yaml`
+3. Single-instance environment variables (`APSTRA_HOST`, `APSTRA_USERNAME`, `APSTRA_PASSWORD`)
+
+### YAML format
 
 ```yaml
 instances:
@@ -163,357 +208,304 @@ instances:
     host: https://apstra.example.com
     username: admin
     password: changeme
-    ssl_verify: false   # set to true if you have a valid signed cert
-
-  # - name: dc-secondary          # add as many instances as needed
-  #   host: https://apstra-dr.example.com
-  #   username: admin
-  #   password: changeme
-  #   ssl_verify: false
+    ssl_verify: false
 ```
 
-`instances.yaml` is excluded from git (it contains credentials). Never commit it.
+### Apstra configuration environment variables
 
-### Environment variable overrides
+| Variable | Required | Default | Notes |
+|---|---|---|---|
+| `APSTRA_CONFIG_FILE` | no | unset | Absolute path to instances YAML |
+| `APSTRA_HOST` | yes (single-instance mode) | unset | Controller URL |
+| `APSTRA_USERNAME` | yes (single-instance mode) | unset | Login username |
+| `APSTRA_PASSWORD` | yes (single-instance mode) | unset | Login password |
+| `APSTRA_SSL_VERIFY` | no | `false` | TLS cert validation |
+| `APSTRA_INSTANCE_NAME` | no | `default` | Friendly instance label |
+| `APSTRA_<NAME>_USERNAME` | no | unset | Per-instance username override |
+| `APSTRA_<NAME>_PASSWORD` | no | unset | Per-instance password override |
 
-Credentials can be overridden with environment variables — recommended for production and CI:
+### Server runtime environment variables
 
-```bash
-# Variable name: APSTRA_{NAME_UPPERCASED}_USERNAME / _PASSWORD
-# Hyphens in the instance name become underscores.
-export APSTRA_DC_PRIMARY_USERNAME=admin
-export APSTRA_DC_PRIMARY_PASSWORD=secretpassword
-```
-
----
+| Variable | Default | Notes |
+|---|---|---|
+| `MCP_TRANSPORT` | `stdio` | `stdio`, `http`, or `sse` |
+| `MCP_HOST` | `0.0.0.0` | Used for `http` and `sse` |
+| `MCP_PORT` | `8000` | Used for `http` and `sse` |
+| `MCP_VERBOSE` | `0` | `1` = operational logging, `2` = full debug with payload logging |
+| `MCP_TOOL_SURFACE` | `compact` | `compact` exposes umbrella tools; `full` exposes umbrella + granular legacy tools |
+| `MCP_RESET_STORES_ON_START` | `0` | If `1`, deletes local anomaly/counter store DB files on startup |
+| `MCP_DATA_DIR` | package-local `data/` | Base path for local SQLite stores |
+| `MCP_ANOMALY_DB_PATH` | `<MCP_DATA_DIR>/anomaly_timeseries.db` | Full path override |
+| `MCP_COUNTER_DB_PATH` | `<MCP_DATA_DIR>/counter_timeseries.db` | Full path override |
 
 ## Running the server
 
-The server has two entry points depending on use case:
-
-| Entry point | When to use |
-|-------------|-------------|
-| `python server.py` | Standalone HTTP server — remote clients, Docker, always-on deployments |
-| `fastmcp run server.py` | stdio — local MCP clients like Claude Desktop and Cursor |
-
-### Standalone HTTP server
-
-Run `server.py` directly and configure it with environment variables:
-
-```bash
-MCP_TRANSPORT=http MCP_PORT=8000 python server.py
-```
-
-All supported environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MCP_TRANSPORT` | `stdio` | Set to `http` to enable the HTTP/SSE transport. Any other value falls back to stdio. |
-| `MCP_HOST` | `0.0.0.0` | Interface to bind to. Use `127.0.0.1` to restrict to localhost only. |
-| `MCP_PORT` | `8000` | TCP port to listen on. |
-| `MCP_VERBOSE` | _(unset)_ | Set to any non-empty value (e.g. `1`) to enable debug logging, per-request timing, and full payload inspection. |
-
-Examples:
-
-```bash
-# Minimal — listen on all interfaces, port 8000
-MCP_TRANSPORT=http MCP_PORT=8000 python server.py
-
-# Specific port, localhost only
-MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=9000 python server.py
-
-# HTTP with verbose debug logging
-MCP_TRANSPORT=http MCP_PORT=8000 MCP_VERBOSE=1 python server.py
-```
-
-Once running, the MCP endpoint is available at:
-
-```
-http://<host>:<port>/mcp
-```
-
-### stdio (for Claude Desktop, Cursor, etc.)
+### stdio (default)
 
 ```bash
 python server.py
-# or equivalently
+```
+
+or
+
+```bash
 fastmcp run server.py
 ```
 
-`MCP_TRANSPORT` defaults to `stdio` so no env var is needed.
-
-### Debug / verbose mode
-
-Enable detailed logging on either transport:
+### Streamable HTTP
 
 ```bash
-# stdio with verbose output
-MCP_VERBOSE=1 python server.py
-
-# HTTP with verbose output
-MCP_TRANSPORT=http MCP_PORT=8000 MCP_VERBOSE=1 python server.py
+MCP_TRANSPORT=http MCP_HOST=127.0.0.1 MCP_PORT=8000 python server.py
 ```
 
-Verbose mode activates:
-- `DEBUG`-level logging with timestamps
-- Per-request timing middleware
-- Full request/response payload logging (truncated at 2000 characters)
+Endpoint:
 
-### Smoke-test auth independently
+```text
+http://127.0.0.1:8000/mcp
+```
 
-Before running the full server, verify every instance authenticates correctly:
+### SSE transport
+
+```bash
+MCP_TRANSPORT=sse MCP_HOST=127.0.0.1 MCP_PORT=8001 python server.py
+```
+
+### Verbose logging
+
+```bash
+# Operational logs
+MCP_VERBOSE=1 python server.py
+
+# Full debug logs and payloads
+MCP_VERBOSE=2 python server.py
+```
+
+### Connectivity pre-check
+
+```bash
+python diagnose_connection.py
+```
+
+### Auth pre-check
 
 ```bash
 python auth_test.py
 ```
 
-Prints session status every 10 seconds — confirm `token_valid: True` and `host_reachable: True` for each instance.
+## Recommended troubleshooting flow
 
----
+When a user reports fabric problems:
 
-## Available tools
+1. Call `get_system_liveness` first.
+2. Call `get_config_deviations` next.
+3. If commit is blocked or suspected, call `get_blueprint_build_errors`.
+4. In compact mode, use `anomaly` with `intent="current_live"` and `intent="summary"` first, then a single targeted intent (`events`, `trend`, `correlate_events`, or `device_history`).
+5. In full mode, you can also call granular anomaly timeline/analytics tools directly.
+6. Use `get_junos_command_categories` + `get_junos_show_commands` before `run_device_commands` when syntax is uncertain.
+7. For route-policy, hidden-route, or next-hop resolution issues, call `routing_policy` with `intent="discover"` first, then run only one targeted intent.
+8. Use reference guide tools in this order for token efficiency:
+   - `get_reference_design_overview`
+   - `get_reference_design_section`
+   - `get_reference_design_context` only when full-guide context is explicitly needed
 
-22 tools across 7 categories. Every tool response includes a `_meta` block documenting data source, instance, timestamp, and LLM usage hints.
+## Tool catalog (full surface)
 
-### Anomalies
+Compact mode exposes umbrella tools (`anomaly`, `telemetry`, `virtual_networks`, `probes`) plus core standalone tools. The catalog below lists the full surface available when `MCP_TOOL_SURFACE=full`.
 
-| Tool | Description |
-|------|-------------|
-| `get_current_anomalies` | Active anomalies for a blueprint — severity, type, affected device, and description |
+### Discovery and design state
 
-### Blueprints & instances
+| Tool | Purpose |
+|---|---|
+| `get_blueprints` | List blueprints and high-level metadata |
+| `get_blueprint_build_errors` | Digest-first commit-blocking error/warning analysis |
+| `get_blueprint_configlets` | Blueprint-applied configlets |
+| `get_blueprint_property_sets` | Blueprint-applied property sets |
+| `get_design_configlets` | Design catalog configlets |
+| `get_design_property_sets` | Design catalog property sets |
+| `get_blueprint_configlet_drift` | Drift between blueprint and catalog configlets |
+| `get_blueprint_property_set_drift` | Drift between blueprint and catalog property sets |
 
-| Tool | Description |
-|------|-------------|
-| `get_blueprints` | All blueprints across all instances (or a named instance) with status and type |
-| `get_blueprint_configlets` | Configlets applied to a blueprint — condition expressions and Jinja2 generators |
-| `get_blueprint_property_sets` | Property sets applied to a blueprint — key-value variables injected into configlet templates |
+### Fabric health triage
 
-### Systems (switches)
+| Tool | Purpose |
+|---|---|
+| `get_system_liveness` | Detect unreachable systems before deeper troubleshooting |
+| `get_config_deviations` | Diff intended vs actual system config |
+| `get_current_anomalies` | Current active anomalies |
+| `get_active_anomalies_from_store` | Fast anomaly snapshot from local store |
 
-| Tool | Description |
-|------|-------------|
-| `get_systems` | All switch systems in a blueprint with role, deploy state, and chassis info |
-| `get_system_config_context` | Full design-time config context for a switch — the data model Apstra uses to render device config |
+### Inventory, topology, and intent graph
 
-### Virtual networks & routing
+| Tool | Purpose |
+|---|---|
+| `get_systems` | Discover switches and required `system_id` values |
+| `get_system_config_context` | Raw context model used for config rendering |
+| `get_interface_list` | Interface inventory and intent-side attributes |
+| `get_link_list` | Physical link topology and endpoint data |
+| `get_vn_deployments` | VN deployment by switch |
+| `get_virtual_networks` | VN inventory and attributes |
+| `get_routing_zones` | Routing zone (VRF) inventory |
+| `get_routing_zone_detail` | Per-zone detailed deployment |
+| `get_virtual_network_detail` | Per-VN detailed deployment |
+| `get_fabric_bgp_peerings` | Intra-fabric BGP sessions |
+| `get_external_blueprint_peerings` | Fabric-to-external BGP sessions |
+| `get_fabric_mtu_check` | MTU consistency and VXLAN headroom checks |
 
-| Tool | Description |
-|------|-------------|
-| `get_vn_deployments` | Where each VN is deployed — one row per VN per switch, including local VLAN ID |
-| `get_virtual_networks` | VN design list with routing zone membership, VXLAN VNI, and IP gateway config |
-| `get_routing_zones` | All routing/security zones (VRFs) in a blueprint with VN count |
-| `get_routing_zone_detail` | Per-switch deployment detail for a single routing zone — interfaces, attached VNs |
-| `get_virtual_network_detail` | Per-switch deployment detail for a single VN — VLAN, gateway, bound interfaces |
+### CLI, rendering, and references
 
-### BGP
+| Tool | Purpose |
+|---|---|
+| `run_device_commands` | Run JunOS show commands via Apstra fetchcmd |
+| `get_rendered_config` | Rendered config by sections/subsections |
+| `routing_policy` | Discover-first routing-policy dispatcher for peer health, policy explanation, hidden routes, RIB comparison, and next-hop resolution |
+| `get_reference_design_overview` | Compact index of reference sections |
+| `get_reference_design_section` | Fetch one guide section |
+| `get_reference_design_context` | Full guide content |
+| `get_junos_command_categories` | Command taxonomy for scoped lookup |
+| `get_junos_show_commands` | JunOS command reference with optional category filters |
 
-| Tool | Description |
-|------|-------------|
-| `get_external_blueprint_peerings` | BGP sessions between fabric devices and external systems (routers, firewalls, servers) |
-| `get_fabric_bgp_peerings` | Intra-fabric eBGP sessions (spine-leaf underlay, ESI peer links) |
+### Telemetry and probe workflows
 
-### Interfaces & links
+| Tool | Purpose |
+|---|---|
+| `get_interface_counters` | Live cumulative interface counters |
+| `get_interface_utilisation` | Probe-based utilization and error/discard rates |
+| `get_system_telemetry` | Live per-system telemetry metrics |
+| `get_interface_error_trend` | Time-series growth for one interface's counters |
+| `get_top_error_growers` | Fastest-growing interface errors from local store |
+| `get_probe_list` | List probes and stage names |
+| `get_probe_detail` | Probe stage details for current state |
+| `get_probe_history` | Probe stage history over time |
 
-| Tool | Description |
-|------|-------------|
-| `get_interface_list` | All interfaces for a switch — type, description, IP, operational state |
-| `get_link_list` | Physical fabric links with both endpoints, link role, type, and speed |
+### Anomaly timeline and analytics
 
-### Config & design
-
-| Tool | Description |
-|------|-------------|
-| `get_rendered_config` | Full JunOS/EOS rendered config for a switch, parsed into hierarchical sections; supports narrowing to specific sections or subsections |
-| `get_design_configlets` | All configlets in the instance-level design catalogue (master copies) |
-| `get_design_property_sets` | All property sets in the instance-level design catalogue |
-| `get_blueprint_configlet_drift` | Compares blueprint-applied configlets against design catalogue — reports drifted templates |
-| `get_blueprint_property_set_drift` | Compares blueprint-applied property sets against design catalogue — reports drifted values |
-| `get_fabric_mtu_check` | Audits MTU across the fabric; validates physical/inet symmetry and VXLAN headroom |
-| `get_reference_design_context` | Full Apstra Reference Design Guide as structured Markdown |
-
-### Command execution
-
-| Tool | Description |
-|------|-------------|
-| `run_device_commands` | Runs one or more CLI commands on a single switch or all switches in a blueprint via the Apstra fetchcmd API. Commands run in parallel — all switches in a batch execute concurrently up to `max_concurrent_systems` (default 10) |
-
-**`run_device_commands` parameters:**
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `blueprint_id` | string | required | Target blueprint |
-| `commands` | list[string] | required | CLI commands to run (e.g. `["show version", "show bgp summary"]`) |
-| `system_id` | string | optional | Target a single switch (chassis serial). Omit to run on all switches |
-| `output_format` | string | `"json"` | `"json"` or `"text"` |
-| `timeout_seconds` | int | `30` | Per-command poll timeout |
-| `max_concurrent_systems` | int | `10` | Max switches queried simultaneously. Increase up to ~20 for larger fabrics |
-| `instance_name` | string | optional | Target a specific Apstra instance |
-
----
+| Tool | Purpose |
+|---|---|
+| `get_anomaly_events` | Event-level anomaly timeline queries |
+| `get_anomaly_summary` | Compact anomaly volume summary |
+| `get_device_anomaly_history` | Device-scoped anomaly history |
+| `get_anomaly_trend` | Aggregated trend views |
+| `get_correlated_faults` | Correlated anomalies around a fault window |
+| `get_fault_durations` | Fault duration metrics |
+| `get_device_anomaly_heatmap` | Device/time anomaly concentration |
+| `correlate_anomaly_events` | Cross-signal correlation from anomaly events |
 
 ## Architecture
 
-```
-MCP client (Claude, Cursor …)
-        │
-        ▼
-  tools/*.py          @mcp.tool() decorators — parameter parsing, ctx extraction
-        │
-        ▼
-  handlers/*.py       Business logic, fan-out across instances, response shaping
-        │
-        ▼
-  primitives/         Shared, MCP-unaware functions and classes
-  ├── auth_manager.py        ApstraSession — auth, token refresh, host probe
-  ├── graph_client.py        ApstraKuzuGraph + BlueprintGraphRegistry
-  ├── live_data_client.py    Async HTTP wrappers for live Apstra REST API
-  ├── design_diff_client.py  Staged vs active state comparison
-  └── response_parser.py     Normalisation and LLM formatting hints
+```text
+MCP client (Claude, Copilot, Cursor, etc.)
+        |
+        v
+tools/*.py
+        |
+        v
+handlers/*.py
+        |
+        v
+primitives/*.py
 ```
 
-### Authentication and keep-alive
+Layer responsibilities:
 
-`primitives/auth_manager.py` handles all auth. Tokens are acquired at startup and kept valid by two background asyncio tasks per session:
+- `tools/`: MCP decorators, parameter schemas, context handling.
+- `handlers/`: business logic, blueprint/session resolution, response shaping.
+- `primitives/`: shared clients/parsers/stores with no MCP dependency.
 
-- **Token refresh loop** — decodes the JWT `exp` claim, re-authenticates 5 minutes before expiry. Retries every 15 seconds on failure.
-- **Probe loop** — calls `/api/version` every 30 seconds to confirm reachability. Attempts re-auth if the probe fails (catches server-side token revocation).
+Key runtime components:
 
-Both `token_valid` and `host_reachable` are tracked independently and exposed in every tool response's `_meta` block.
+- `ApstraSession` auth manager with background refresh/probe loops.
+- `BlueprintGraphRegistry` with version-aware rebuilds.
+- `AnomalyStore` and `CounterStore` SQLite stores.
+- Background pollers (`anomaly_poller`, `counter_poller`) that maintain local history.
 
-### Graph database caching
+## Data sources and freshness
 
-Graph-backed tools use a `BlueprintGraphRegistry` that holds one Kuzu in-memory database per blueprint. Before each query the registry checks the Apstra blueprint version endpoint:
+| Source | Typical usage |
+|---|---|
+| Live Apstra REST API | Real-time blueprint/system/anomaly/config data |
+| Live fetchcmd API | Device CLI execution via Apstra |
+| Blueprint graph cache (Kuzu) | Fast design-intent topology queries |
+| Local anomaly store | Historical anomaly event/timeline analytics |
+| Local counter store | Error growth and telemetry trend analytics |
 
-- **Version unchanged** → returns the existing graph immediately (fast path)
-- **Version incremented** → rebuilds the graph from the full blueprint graph API response
+Notes:
 
-This means the first query for a blueprint is slower (full rebuild), but subsequent queries are fast, and the graph stays automatically consistent with Apstra after every commit.
-
-### Multi-instance support
-
-All handlers receive the full session pool. Each handler decides whether to route to a specific instance (`instance_name` parameter) or fan out across all instances and merge the results. Responses always include a `instance` field in `_meta` so the LLM knows which controller produced the data.
-
----
-
-## Data sources
-
-| Source | Key | What it contains | Notes |
-|--------|-----|------------------|-------|
-| Live REST API | `live` | Real-time operational state, anomalies, rendered config | Variable latency; reflects current fault state |
-| Blueprint graph | `blueprint_design` | Design intent — graph of devices, links, VNs, policies | Version-cached; rebuilt automatically on commit |
-| Design catalogue | `design_catalogue` | Instance-level master copies of configlets, property sets | Queried live on each call |
-| Fetchcmd API | `live_fetchcmd` | CLI command output from device telemetry agent | Async poll; respects `timeout_seconds` |
-
-The data source for every tool is documented in its docstring and in the `_meta.data_source` field of every response.
-
----
+- Graph data is rebuilt when blueprint version changes.
+- Store-backed analytics are near-real-time, based on poll cadence.
+- Many telemetry and anomaly tools include a `_meta` section; not every tool response does.
 
 ## Testing
 
-504 tests, all unit tests — no live Apstra connection required.
+Current repository test footprint (May 2026):
+
+- 25 test modules under `tests/`
+- 700+ test functions
+
+Run all tests:
 
 ```bash
-# Run all tests
-.venv/bin/pytest tests/ -v
-
-# Run a specific module
-.venv/bin/pytest tests/test_run_commands.py -v
-
-# Quiet summary
-.venv/bin/pytest tests/ -q
+.venv/bin/python -m pytest tests -q
 ```
 
-Tests mock at the primitive layer (`live_data_client`, `graph_client`, `auth_manager`). Handlers and parsers are tested against real response shapes captured from a live Apstra environment.
+Run focused suites:
 
----
+```bash
+.venv/bin/python -m pytest -q tests/test_blueprint_build_errors.py
+.venv/bin/python -m pytest -q tests/test_reference.py tests/test_server_instructions.py
+```
 
 ## Project structure
 
+```text
+.
+|- server.py
+|- instructions.md
+|- pyproject.toml
+|- config/
+|  |- instances.yaml.example
+|  `- settings.py
+|- tools/
+|  |- anomalies.py
+|  |- anomaly_analytics.py
+|  |- anomaly_timeline.py
+|  |- bgp.py
+|  |- blueprints.py
+|  |- config_rendering.py
+|  |- design.py
+|  |- interfaces.py
+|  |- links.py
+|  |- mtu_check.py
+|  |- probes.py
+|  |- reference.py
+|  |- routing_policy.py
+|  |- run_commands.py
+|  |- system_health.py
+|  |- systems.py
+|  |- telemetry.py
+|  `- virtual_networks.py
+|- handlers/
+|- primitives/
+|- tests/
+`- _ref_arch/
 ```
-mcp-apstra/
-├── server.py                    # FastMCP app — tool registration and lifespan
-├── pyproject.toml               # Project metadata and dependencies
-├── auth_test.py                 # Standalone auth smoke test
-│
-├── config/
-│   ├── instances.yaml           # Your instance config (git-ignored — contains credentials)
-│   ├── instances.yaml.example   # Template to copy
-│   └── settings.py              # Reads instances.yaml, builds session pool
-│
-├── tools/                       # @mcp.tool() wrappers — parameter parsing only
-│   ├── anomalies.py             # get_current_anomalies
-│   ├── bgp.py                   # get_external_blueprint_peerings, get_fabric_bgp_peerings
-│   ├── blueprints.py            # get_blueprints, get_blueprint_configlets, get_blueprint_property_sets
-│   ├── config_rendering.py      # get_rendered_config
-│   ├── design.py                # get_design_configlets, get_design_property_sets,
-│   │                            #   get_blueprint_configlet_drift, get_blueprint_property_set_drift
-│   ├── interfaces.py            # get_interface_list
-│   ├── links.py                 # get_link_list
-│   ├── mtu_check.py             # get_fabric_mtu_check
-│   ├── reference.py             # get_reference_design_context
-│   ├── run_commands.py          # run_device_commands
-│   ├── systems.py               # get_systems, get_system_config_context
-│   └── virtual_networks.py      # get_vn_deployments, get_virtual_networks,
-│                                #   get_routing_zones, get_routing_zone_detail,
-│                                #   get_virtual_network_detail
-│
-├── handlers/                    # Business logic — no MCP imports
-│   ├── anomalies.py
-│   ├── bgp.py
-│   ├── blueprints.py
-│   ├── config_rendering.py
-│   ├── design.py
-│   ├── interfaces.py
-│   ├── links.py
-│   ├── mtu_check.py
-│   ├── run_commands.py
-│   ├── systems.py
-│   └── virtual_networks.py
-│
-├── primitives/                  # Shared, MCP-unaware Python
-│   ├── auth_manager.py          # ApstraSession class
-│   ├── design_diff_client.py    # Staged vs active state comparison
-│   ├── graph_client.py          # ApstraKuzuGraph + BlueprintGraphRegistry
-│   ├── live_data_client.py      # Async HTTP wrappers
-│   └── response_parser.py       # Normalisation and formatting
-│
-└── tests/
-    ├── test_anomalies.py
-    ├── test_bgp.py
-    ├── test_blueprints.py
-    ├── test_config_rendering.py
-    ├── test_design.py
-    ├── test_graph_client.py
-    ├── test_interfaces.py
-    ├── test_links.py
-    ├── test_mtu_check.py
-    ├── test_run_commands.py
-    ├── test_systems.py
-    └── test_virtual_networks.py
-```
-
----
 
 ## Requirements
 
-- Python 3.10+
-- Juniper Apstra 4.x or 5.x
-- Apstra user account with API read access
+- Python >= 3.10
+- Juniper Apstra environment with API access
 
-### Python dependencies
+Core dependencies from `pyproject.toml`:
 
-| Package | Version | Purpose |
-|---------|---------|---------|
-| `fastmcp` | ≥ 2.0 | MCP server framework |
-| `httpx` | ≥ 0.27 | Async HTTP client |
-| `pyyaml` | ≥ 6.0 | YAML config parsing |
-| `kuzu` | ≥ 0.6 | In-memory graph database |
-| `pytest` | ≥ 8.0 | Test runner (dev) |
-| `pytest-asyncio` | ≥ 0.23 | Async test support (dev) |
+- `fastmcp>=3.2.0`
+- `httpx>=0.28.1`
+- `pyyaml>=6.0.3`
+- `kuzu>=0.11.3`
 
----
+Dev dependencies:
 
-## Licence
+- `pytest>=9.0.3`
+- `pytest-asyncio>=1.3.0`
+
+## License
 
 MIT

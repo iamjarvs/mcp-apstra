@@ -276,7 +276,12 @@ class ApstraSession:
             logger.debug("[%s] Probe successful.", self.name)
             return True
         except Exception as e:
-            logger.warning("[%s] Probe request failed: %s", self.name, e)
+            logger.warning(
+                "[%s] Probe request failed: %s: %s",
+                self.name,
+                type(e).__name__,
+                e or "(no detail)",
+            )
             return False
 
     # ------------------------------------------------------------------
@@ -288,13 +293,41 @@ class ApstraSession:
         Makes the login API call, stores the token, and updates status flags.
         Raises httpx.HTTPError or RuntimeError on failure.
         """
-        async with httpx.AsyncClient(verify=self._ssl_verify, timeout=15.0) as client:
-            response = await client.post(
-                f"{self.host}/api/aaa/login",
-                json={"username": self._username, "password": self._password},
+        try:
+            async with httpx.AsyncClient(verify=self._ssl_verify, timeout=15.0) as client:
+                response = await client.post(
+                    f"{self.host}/api/aaa/login",
+                    json={"username": self._username, "password": self._password},
+                )
+                response.raise_for_status()
+                data = response.json()
+        except (httpx.ConnectError, httpx.TimeoutException) as e:
+            # Network-level errors: host unreachable, timeout, TLS negotiation failure
+            logger.warning(
+                "[%s] Connection error to %s: %s. "
+                "Ensure the host is reachable and APSTRA_SSL_VERIFY is set correctly (defaults to false for self-signed certs). "
+                "Will retry in 15 seconds.",
+                self.name,
+                self.host,
+                type(e).__name__,
             )
-            response.raise_for_status()
-            data = response.json()
+            raise
+        except httpx.HTTPStatusError as e:
+            # HTTP errors (4xx, 5xx)
+            if e.response.status_code == 401:
+                logger.warning(
+                    "[%s] Authentication failed (401 Unauthorized). Check username and password.",
+                    self.name,
+                )
+            else:
+                logger.warning(
+                    "[%s] HTTP error %d from %s. Response: %s",
+                    self.name,
+                    e.response.status_code,
+                    self.host,
+                    e.response.text[:200],
+                )
+            raise
 
         token = data.get("token")
         if not token:

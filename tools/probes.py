@@ -217,14 +217,14 @@ def register(mcp):
             Field(description="Probe UUID. Use get_probe_list to discover probe IDs."),
         ],
         stage: Annotated[
-            str,
-            Field(description=(
+            str | None,
+            Field(default=None, description=(
                 "REQUIRED. Stage name to query. "
                 "You MUST call get_probe_list first to get stage_names for this probe — "
                 "do not guess the stage name. "
                 "Alternatively, call get_probe_detail to see all_stages."
             )),
-        ],
+        ] = None,
         hours_back: Annotated[
             int,
             Field(default=1, description="How far back to look (1–168 hours). Default 1.", ge=1, le=168),
@@ -255,6 +255,12 @@ def register(mcp):
         target = [s for s in sessions if instance_name is None or s.name == instance_name]
         if not target:
             return {"error": f"No session found for instance '{instance_name}'", "hint": "Do not set instance_name — leave as None to query all instances automatically."}
+
+        if not stage:
+            return {
+                "error": "stage is required",
+                "hint": "Call get_probe_list to discover stage_names for this probe, then retry with the exact stage name.",
+            }
 
         session = target[0]
         hours_back = max(1, min(hours_back, 168))

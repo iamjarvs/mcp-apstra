@@ -28,7 +28,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-WINDOW_DAYS = 7
+WINDOW_DAYS = 30  # matches the 30-day backfill discovery window
 
 _DEFAULT_DB_PATH = Path(__file__).parent.parent / "data" / "anomaly_timeseries.db"
 
@@ -61,6 +61,7 @@ class AnomalyStore:
                 role            TEXT,
                 identity_json   TEXT    NOT NULL,
                 expected_json   TEXT,
+                actual_json     TEXT,
                 first_detected  TEXT,
                 UNIQUE(blueprint_id, instance_name, identity_json)
             );
@@ -90,6 +91,13 @@ class AnomalyStore:
             CREATE INDEX IF NOT EXISTS idx_anom_type     ON anomalies(anomaly_type);
         """)
         self._con.commit()
+        # Migration: add actual_json to existing databases that pre-date v2.1
+        try:
+            self._con.execute("ALTER TABLE anomalies ADD COLUMN actual_json TEXT")
+            self._con.commit()
+            log.info("AnomalyStore: migrated anomalies table — added actual_json column")
+        except Exception:
+            pass  # Column already exists (new installs or already migrated)
 
     # ── Write helpers ─────────────────────────────────────────────────────────
 
@@ -100,23 +108,30 @@ class AnomalyStore:
         a: dict,
     ) -> int:
         """
-        Insert an anomaly identity if it doesn't exist; return its row id.
+        Insert or update an anomaly identity; return its row id.
         `a` is a raw anomaly dict from the Apstra history API.
+
+        On conflict (same blueprint + identity) the expected_json, actual_json,
+        device_hostname and role are refreshed so LLMs always see the most
+        up-to-date comparison data for every anomaly identity.
         """
-        id_json = json.dumps(a["identity"], sort_keys=True)
+        # Strip fields that are not part of the physical device identity so the
+        # same anomaly always maps to the same key regardless of which API
+        # endpoint returned it.
+        _NON_IDENTITY_FIELDS = {"anomaly_type"}
+        clean_identity = {k: v for k, v in a["identity"].items() if k not in _NON_IDENTITY_FIELDS}
+        id_json = json.dumps(clean_identity, sort_keys=True)
         with self._lock:
-            row = self._con.execute(
-                "SELECT id FROM anomalies "
-                "WHERE blueprint_id=? AND instance_name=? AND identity_json=?",
-                (blueprint_id, instance_name, id_json),
-            ).fetchone()
-            if row:
-                return row["id"]
             self._con.execute(
                 """INSERT INTO anomalies
                    (blueprint_id, instance_name, anomaly_type, device_hostname,
-                    role, identity_json, expected_json, first_detected)
-                   VALUES (?,?,?,?,?,?,?,?)""",
+                    role, identity_json, expected_json, actual_json, first_detected)
+                   VALUES (?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(blueprint_id, instance_name, identity_json) DO UPDATE SET
+                       expected_json   = excluded.expected_json,
+                       actual_json     = excluded.actual_json,
+                       device_hostname = COALESCE(excluded.device_hostname, device_hostname),
+                       role            = COALESCE(excluded.role, role)""",
                 (
                     blueprint_id,
                     instance_name,
@@ -125,6 +140,7 @@ class AnomalyStore:
                     a.get("role"),
                     id_json,
                     json.dumps(a.get("expected")),
+                    json.dumps(a.get("actual")),
                     a.get("detected_at"),
                 ),
             )
@@ -261,6 +277,38 @@ class AnomalyStore:
         """
         Return events matching the given filters, newest first.
         """
+        page = self.query_events_page(
+            blueprint_id=blueprint_id,
+            instance_name=instance_name,
+            anomaly_type=anomaly_type,
+            device=device,
+            since=since,
+            until=until,
+            raised_only=raised_only,
+            limit=limit,
+        )
+        return page["events"]
+
+    def query_events_page(
+        self,
+        blueprint_id: str,
+        instance_name: str | None = None,
+        anomaly_type: str | None = None,
+        device: str | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        raised_only: bool = False,
+        limit: int = 100,
+        cursor_timestamp: str | None = None,
+        cursor_event_id: int | None = None,
+    ) -> dict:
+        """
+        Return a bounded page of events with keyset pagination metadata.
+
+        Pagination order is newest-first by (timestamp DESC, event_id DESC).
+        Provide both ``cursor_timestamp`` and ``cursor_event_id`` from the previous
+        page's ``next_cursor`` to fetch older rows.
+        """
         where = ["a.blueprint_id = ?"]
         params: list = [blueprint_id]
 
@@ -282,9 +330,17 @@ class AnomalyStore:
         if raised_only:
             where.append("e.raised = 1")
 
-        params.append(limit)
+        if (cursor_timestamp is None) != (cursor_event_id is None):
+            raise ValueError("cursor_timestamp and cursor_event_id must be provided together")
+        if cursor_timestamp is not None and cursor_event_id is not None:
+            where.append("(e.timestamp < ? OR (e.timestamp = ? AND e.id < ?))")
+            params.extend([cursor_timestamp, cursor_timestamp, cursor_event_id])
+
+        page_limit = max(1, min(limit, 500))
+        params.append(page_limit + 1)
         rows = self._con.execute(
             f"""SELECT
+                    e.id AS event_id,
                     e.timestamp, e.raised, e.actual_json, e.source,
                     a.anomaly_type, a.device_hostname, a.role,
                     a.identity_json, a.expected_json, a.first_detected,
@@ -292,13 +348,16 @@ class AnomalyStore:
                 FROM events e
                 JOIN anomalies a ON a.id = e.anomaly_id
                 WHERE {' AND '.join(where)}
-                ORDER BY e.timestamp DESC
+                ORDER BY e.timestamp DESC, e.id DESC
                 LIMIT ?""",
             params,
         ).fetchall()
 
+        has_more = len(rows) > page_limit
+        page_rows = rows[:page_limit]
+
         results = []
-        for r in rows:
+        for r in page_rows:
             results.append({
                 "timestamp":      r["timestamp"],
                 "raised":         bool(r["raised"]),
@@ -312,7 +371,21 @@ class AnomalyStore:
                 "first_detected": r["first_detected"],
                 "instance":       r["instance_name"],
             })
-        return results
+
+        next_cursor = None
+        if has_more and page_rows:
+            last = page_rows[-1]
+            next_cursor = {
+                "cursor_timestamp": last["timestamp"],
+                "cursor_event_id": last["event_id"],
+            }
+
+        return {
+            "events": results,
+            "returned_count": len(results),
+            "has_more": has_more,
+            "next_cursor": next_cursor,
+        }
 
     def get_currently_active(
         self,
@@ -662,3 +735,16 @@ class AnomalyStore:
 
     def close(self):
         self._con.close()
+
+    def reset(self):
+        """
+        Clear all persisted anomaly data while keeping schema and indexes.
+
+        Used when the server is configured to force a fresh backfill on startup.
+        """
+        with self._lock:
+            self._con.execute("DELETE FROM events")
+            self._con.execute("DELETE FROM anomalies")
+            self._con.execute("DELETE FROM poll_state")
+            self._con.commit()
+            self._con.execute("PRAGMA wal_checkpoint(TRUNCATE)")

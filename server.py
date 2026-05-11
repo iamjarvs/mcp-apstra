@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastmcp import FastMCP
 from fastmcp.server.middleware.logging import LoggingMiddleware
@@ -30,16 +31,110 @@ from tools import system_health as system_health_tool
 from tools import virtual_networks as virtual_networks_tool
 from tools import telemetry as telemetry_tool
 from tools import probes as probes_tool
+from tools import routing_policy as routing_policy_tool
+from tools import anomaly_umbrella as anomaly_umbrella_tool
+from tools import telemetry_dispatch as telemetry_dispatch_tool
+from tools import virtual_networks_dispatch as virtual_networks_dispatch_tool
+from tools import probes_dispatch as probes_dispatch_tool
+from tools import triage_dispatch as triage_dispatch_tool
+from tools import audit as audit_tool
+
+
+def _env_enabled(name: str, default: str = "0") -> bool:
+    value = os.environ.get(name, default)
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_store_paths() -> tuple[Path, Path]:
+    """
+    Resolves anomaly/counter SQLite file locations from environment variables.
+
+    Precedence:
+      1) MCP_ANOMALY_DB_PATH / MCP_COUNTER_DB_PATH (per-file overrides)
+      2) MCP_DATA_DIR + default filenames
+      3) package-local ./data directory (existing behavior)
+    """
+    data_dir_env = os.environ.get("MCP_DATA_DIR")
+    base_dir = (
+        Path(data_dir_env).expanduser()
+        if data_dir_env
+        else (Path(__file__).resolve().parent / "data")
+    )
+
+    anomaly_override = os.environ.get("MCP_ANOMALY_DB_PATH")
+    counter_override = os.environ.get("MCP_COUNTER_DB_PATH")
+
+    anomaly_path = (
+        Path(anomaly_override).expanduser()
+        if anomaly_override
+        else (base_dir / "anomaly_timeseries.db")
+    )
+    counter_path = (
+        Path(counter_override).expanduser()
+        if counter_override
+        else (base_dir / "counter_timeseries.db")
+    )
+
+    return anomaly_path, counter_path
+
+
+def _delete_store_files_on_startup(base_files: tuple[Path, Path]) -> None:
+    for base in base_files:
+        for candidate in (base, Path(f"{base}-wal"), Path(f"{base}-shm")):
+            try:
+                if candidate.exists():
+                    candidate.unlink()
+                    logging.warning("Deleted store file on startup: %s", candidate)
+            except Exception as exc:
+                logging.warning("Failed deleting store file %s: %s", candidate, exc)
+
+
+def _load_instructions() -> str:
+    """
+    Loads MCP server instructions from instructions.md alongside this file.
+    Falls back to a minimal inline string if the file is missing, so the
+    server still starts cleanly in unexpected environments.
+    """
+    instructions_path = Path(__file__).resolve().parent / "instructions.md"
+    try:
+        return instructions_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        logging.warning(
+            "instructions.md not found at %s — using fallback instructions.",
+            instructions_path,
+        )
+        return (
+            "MCP server for Juniper Apstra network automation. "
+            "This server is read-only. "
+            "Run get_system_liveness and get_config_deviations before investigating "
+            "individual devices or protocols."
+        )
 
 
 @asynccontextmanager
 async def lifespan(app):
     sessions = load_sessions()
     registry = BlueprintGraphRegistry()
-    store = AnomalyStore()
-    counter_store = CounterStore()
+    anomaly_db_path, counter_db_path = _resolve_store_paths()
+    if _env_enabled("MCP_RESET_STORES_ON_START", "0"):
+        logging.warning(
+            "MCP_RESET_STORES_ON_START enabled: deleting local anomaly/counter store files before initialization"
+        )
+        _delete_store_files_on_startup((anomaly_db_path, counter_db_path))
+    store = AnomalyStore(db_path=anomaly_db_path)
+    counter_store = CounterStore(db_path=counter_db_path)
     for session in sessions:
-        await session.authenticate()
+        try:
+            await session.authenticate()
+        except Exception as e:
+            logging.error(
+                "Failed to authenticate session '%s' at startup: %s: %s. "
+                "Background refresh will retry every %d seconds.",
+                session.name,
+                type(e).__name__,
+                str(e),
+                15,  # AUTH_RETRY_INTERVAL_SECONDS
+            )
         session.start_background_refresh()
     poller_task = asyncio.create_task(
         run_anomaly_poller(sessions, store),
@@ -50,10 +145,10 @@ async def lifespan(app):
         name="counter-poller",
     )
     yield {
-        "sessions":      sessions,
+        "sessions":       sessions,
         "graph_registry": registry,
-        "anomaly_store": store,
-        "counter_store": counter_store,
+        "anomaly_store":  store,
+        "counter_store":  counter_store,
     }
     poller_task.cancel()
     counter_poller_task.cancel()
@@ -65,107 +160,66 @@ async def lifespan(app):
 mcp = FastMCP(
     "apstra-mcp",
     lifespan=lifespan,
-    instructions=(
-        "MCP server for Juniper Apstra network automation. "
-        "\n\n"
-        "## Tool index\n\n"
-        "**Discovery:** get_blueprints, get_systems, get_interface_list, get_link_list, "
-        "get_routing_zones, get_virtual_networks\n"
-        "**Health/triage (run first):** get_system_liveness, get_config_deviations, "
-        "get_current_anomalies, get_active_anomalies_from_store\n"
-        "**CLI/config:** run_device_commands, get_rendered_config, get_system_config_context, "
-        "get_junos_show_commands\n"
-        "**Telemetry (live):** get_interface_counters, get_interface_utilisation, "
-        "get_system_telemetry\n"
-        "**Telemetry (trends):** get_top_error_growers, get_interface_error_trend\n"
-        "**Analytics/anomalies:** get_anomaly_trend, get_correlated_faults, get_anomaly_events, "
-        "get_anomaly_summary, get_device_anomaly_history, get_device_anomaly_heatmap, "
-        "get_fault_durations, correlate_anomaly_events\n"
-        "**IBA probes:** get_probe_list, get_probe_detail, get_probe_history\n"
-        "**VN/VRF:** get_vn_deployments, get_virtual_network_detail, get_routing_zone_detail\n"
-        "**Design/configlets:** get_blueprint_configlets, get_blueprint_property_sets, "
-        "get_design_configlets, get_design_property_sets, get_blueprint_configlet_drift, "
-        "get_blueprint_property_set_drift\n"
-        "**MTU:** get_fabric_mtu_check\n"
-        "**Reference:** get_reference_design_context\n\n"
-        "## Key concepts\n\n"
-        "**Instance**: A single Apstra controller (virtual machine). One instance manages "
-        "its own set of blueprints independently. This server may be connected to one or "
-        "more instances simultaneously, each identified by a name (e.g. 'dc-primary').\n\n"
-        "**Blueprint**: A running data centre managed by an Apstra instance. Each instance "
-        "can contain multiple blueprints. A blueprint represents a complete, deployed fabric "
-        "— its devices, cabling, routing policy, and intent. When a tool asks for a "
-        "`blueprint_id`, it refers to a specific data centre within a specific instance.\n\n"
-        "**Relationship**: An installation with 3 instances each managing 3 blueprints "
-        "gives 9 blueprints in total. Tools that accept `instance_name` work at the instance "
-        "level; tools that accept `blueprint_id` work at the data centre level.\n\n"
-        "## Discovery and blueprint resolution\n\n"
-        "**blueprint_id resolution** — all analytics, topology, and health tools accept "
-        "`blueprint_id` in three forms:\n\n"
-        "- `null` or `'all'` → every blueprint across all instances (fan-out, results grouped "
-        "by blueprint)\n"
-        "- Partial label string (e.g. `'DC1'`) → case-insensitive substring match against "
-        "blueprint labels. Use this when the user refers to a fabric by a short name.\n"
-        "- Full UUID → that specific blueprint exactly.\n\n"
-        "You do **not** need to call `get_blueprints` first just to obtain an ID — resolution "
-        "is automatic. Call `get_blueprints` only when the user explicitly asks to list "
-        "available blueprints, or when you need to confirm that a name is unambiguous before "
-        "a destructive action.\n\n"
-        "**system_id**: Never guess or assume a `system_id`. Every time a tool requires a "
-        "`system_id` (hardware chassis serial, e.g. '5254002D005F'), you MUST call "
-        "`get_systems` with the correct `blueprint_id` to retrieve the list of devices and "
-        "match by hostname. The `system_id` field is the hardware serial — do NOT use the "
-        "graph node `id` field.\n\n"
-        "**instance_name**: Do NOT ask the user for an `instance_name`. Leave it as null "
-        "unless the user explicitly names a specific instance. The server will query all "
-        "instances automatically.\n\n"
-        "## Triage-first rules — run these before per-device investigation\n\n"
-        "When a user reports a fabric problem (BGP down, device unreachable, interface errors, "
-        "unexpected behaviour) you MUST run BOTH of these checks first, before investigating "
-        "individual protocols or interfaces:\n\n"
-        "1. **`get_system_liveness`** — identifies any device that Apstra cannot reach. "
-        "If a device appears here, ALL downstream symptoms on that device (BGP failures, "
-        "missing routes, interface anomalies) are likely caused by the reachability loss, "
-        "not individual protocol faults. Present unreachable devices to the user immediately "
-        "and do NOT attempt CLI commands or counter queries against them.\n\n"
-        "2. **`get_config_deviations`** — identifies devices whose live running config has "
-        "drifted from Apstra's intent. A deviating device was changed outside Apstra (manual "
-        "CLI commit, script injection, partial push). The diff shows exactly what was added "
-        "or removed. If a deviated device also shows protocol anomalies, the manual change "
-        "is the likely root cause — investigate the drift first.\n\n"
-        "Only proceed to BGP, interface, telemetry, or CLI tools once liveness and config "
-        "deviation have been checked and their results surfaced to the user.\n\n"
-        "## JunOS CLI rules\n\n"
-        "Before calling `run_device_commands`, call `get_junos_show_commands` if you are "
-        "not certain of the exact command syntax. JunOS differs from IOS/EOS — for example: "
-        "'show bgp summary' not 'show ip bgp', 'show bfd session' not 'show bfd sessions', "
-        "'show route' not 'show ip route', 'show interfaces terse' not 'show interfaces brief'. "
-        "If a command returns result='commandShellError', read the llm_hint field, correct "
-        "the syntax using `get_junos_show_commands`, and retry immediately.\n\n"
-        "## IBA probe workflow\n\n"
-        "To query IBA probe data: call `get_probe_list` first to discover available probes "
-        "and their `stage_names`. Then call `get_probe_detail` or `get_probe_history` using "
-        "the exact `stage` value from that list — do NOT guess stage names."
-    ),
+    instructions=_load_instructions(),
 )
 
-anomaly_timeline_tool.register(mcp)
-anomalies_tool.register(mcp)
-anomaly_analytics_tool.register(mcp)
-bgp_tool.register(mcp)
-blueprints_tool.register(mcp)
-config_rendering_tool.register(mcp)
-design_tool.register(mcp)
-interfaces_tool.register(mcp)
-links_tool.register(mcp)
-mtu_check_tool.register(mcp)
-reference_tool.register(mcp)
-run_commands_tool.register(mcp)
-system_health_tool.register(mcp)
-systems_tool.register(mcp)
-virtual_networks_tool.register(mcp)
-telemetry_tool.register(mcp)
-probes_tool.register(mcp)
+_TOOL_SURFACE_COMPACT = "compact"
+_TOOL_SURFACE_FULL = "full"
+
+
+def _resolve_tool_surface(value: str | None = None) -> str:
+    raw = value if value is not None else os.environ.get("MCP_TOOL_SURFACE", _TOOL_SURFACE_COMPACT)
+    normalized = str(raw).strip().lower()
+    if normalized in {_TOOL_SURFACE_COMPACT, _TOOL_SURFACE_FULL}:
+        return normalized
+    logging.warning(
+        "Unknown MCP_TOOL_SURFACE '%s'; defaulting to '%s'. Valid values: %s, %s",
+        raw,
+        _TOOL_SURFACE_COMPACT,
+        _TOOL_SURFACE_COMPACT,
+        _TOOL_SURFACE_FULL,
+    )
+    return _TOOL_SURFACE_COMPACT
+
+
+def _register_tools(app_mcp, tool_surface: str | None = None) -> str:
+    surface = _resolve_tool_surface(tool_surface)
+
+    # Core and non-clustered tools are always exposed.
+    bgp_tool.register(app_mcp)
+    blueprints_tool.register(app_mcp)
+    config_rendering_tool.register(app_mcp)
+    design_tool.register(app_mcp)
+    interfaces_tool.register(app_mcp)
+    links_tool.register(app_mcp)
+    mtu_check_tool.register(app_mcp)
+    reference_tool.register(app_mcp)
+    routing_policy_tool.register(app_mcp)
+    run_commands_tool.register(app_mcp)
+    system_health_tool.register(app_mcp)
+    systems_tool.register(app_mcp)
+
+    # Umbrella tools provide a bounded compact surface.
+    anomaly_umbrella_tool.register(app_mcp)
+    telemetry_dispatch_tool.register(app_mcp)
+    virtual_networks_dispatch_tool.register(app_mcp)
+    probes_dispatch_tool.register(app_mcp)
+    triage_dispatch_tool.register(app_mcp)
+    audit_tool.register(app_mcp, include_legacy=(surface == _TOOL_SURFACE_FULL))
+
+    # Full surface keeps all existing granular tools for backwards compatibility.
+    if surface == _TOOL_SURFACE_FULL:
+        anomaly_timeline_tool.register(app_mcp)
+        anomalies_tool.register(app_mcp)
+        anomaly_analytics_tool.register(app_mcp)
+        virtual_networks_tool.register(app_mcp)
+        telemetry_tool.register(app_mcp)
+        probes_tool.register(app_mcp)
+
+    return surface
+
+
+_ACTIVE_TOOL_SURFACE = _register_tools(mcp)
 
 _LOG_LEVEL = os.environ.get("MCP_VERBOSE", "0")
 
@@ -199,16 +253,18 @@ elif _LOG_LEVEL == "2":
     mcp.add_middleware(TimingMiddleware())
     mcp.add_middleware(LoggingMiddleware(include_payloads=True, max_payload_length=2000))
 
+
 def main():
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
     host = os.environ.get("MCP_HOST", "0.0.0.0")
     port = int(os.environ.get("MCP_PORT", "8000"))
     if transport == "http":
         mcp.run(transport="streamable-http", host=host, port=port)
+    elif transport == "sse":
+        mcp.run(transport="sse", host=host, port=port)
     else:
         mcp.run()
 
 
 if __name__ == "__main__":
     main()
-

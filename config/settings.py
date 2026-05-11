@@ -163,9 +163,24 @@ def load_sessions() -> List[ApstraSession]:
     with open(config_path) as f:
         config = yaml.safe_load(f)
 
-    raw_instances = config.get("instances", [])
+    raw_instances = (config or {}).get("instances") or []
 
     if not raw_instances:
+        # If this is the *default* config file (not explicitly set by the user),
+        # treat an empty/commented-out file as "not configured" and fall through
+        # to single-instance env vars so that APSTRA_HOST/USERNAME/PASSWORD work
+        # without needing to remove instances.yaml from the repo.
+        explicit_config = os.environ.get("APSTRA_CONFIG_FILE")
+        if not explicit_config:
+            logger.info(
+                "'%s' has no instances defined — falling back to single-instance "
+                "environment variables (APSTRA_HOST / APSTRA_USERNAME / APSTRA_PASSWORD).",
+                config_path,
+            )
+            session = _build_single_instance_session()
+            logger.info("Session pool built with 1 instance (env vars).")
+            return [session]
+
         raise ValueError(
             f"'{config_path}' contains no instances. "
             "Add at least one Apstra instance under the 'instances' key."

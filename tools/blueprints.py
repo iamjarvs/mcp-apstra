@@ -3,8 +3,19 @@ from typing import Annotated
 from fastmcp import Context
 from pydantic import Field
 
-from handlers.blueprints import handle_get_blueprints
+from handlers.blueprints import (
+    handle_get_blueprint_build_errors,
+    handle_get_blueprints,
+    resolve_blueprints,
+)
 from handlers.blueprint_policy import handle_get_configlets, handle_get_property_sets
+
+_BP_DESC = (
+    "Apstra blueprint ID, partial label, or null. "
+    "Pass null or 'all' for every blueprint. "
+    "Pass a partial name (e.g. 'DC1') to match by label. "
+    "Pass a full UUID for a specific blueprint."
+)
 
 
 def register(mcp):
@@ -36,6 +47,73 @@ def register(mcp):
         return await handle_get_blueprints(
             ctx.lifespan_context["sessions"], instance_name
         )
+
+    @mcp.tool()
+    async def get_blueprint_build_errors(
+        blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
+        instance_name: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance.",
+            ),
+        ] = None,
+        ctx: Context = None,
+    ) -> dict:
+        """
+        Return commit-blocking build errors and non-blocking warnings for one or more blueprints.
+
+        Use this when a user cannot commit a blueprint or asks why commit is blocked.
+        The tool first fetches a digest count from Apstra. It only fetches full detail
+        when errors_count or warnings_count is non-zero.
+
+        Error severity blocks commit. Warning severity does not block commit, but still
+        indicates issues the user should review.
+
+        Full-mode results are normalized into a deduplicated issue list to reduce noisy
+        repeated entries from the raw API payload.
+        """
+        sessions = ctx.lifespan_context["sessions"]
+        blueprints = await resolve_blueprints(sessions, blueprint_id)
+        if instance_name:
+            blueprints = [bp for bp in blueprints if bp.get("instance_name") == instance_name]
+
+        if not blueprints:
+            if instance_name:
+                return {
+                    "error": (
+                        f"No blueprints found matching '{blueprint_id}' "
+                        f"in instance '{instance_name}'"
+                    ),
+                    "hint": "Call get_blueprints to list available blueprints and their labels.",
+                }
+            return {
+                "error": f"No blueprints found matching '{blueprint_id}'",
+                "hint": "Call get_blueprints to list available blueprints and their labels.",
+            }
+
+        results = []
+        for blueprint in blueprints:
+            target_instance = instance_name or blueprint.get("instance_name")
+            result = await handle_get_blueprint_build_errors(
+                sessions,
+                blueprint["id"],
+                target_instance,
+            )
+            result["blueprint_label"] = blueprint.get("label")
+            results.append(result)
+
+        if len(results) == 1:
+            return results[0]
+
+        return {
+            "blueprint_count": len(results),
+            "blueprint_ref": blueprint_id,
+            "total_errors_count": sum(r.get("errors_count", 0) for r in results),
+            "total_warnings_count": sum(r.get("warnings_count", 0) for r in results),
+            "blocking_blueprint_count": sum(1 for r in results if r.get("errors_count", 0) > 0),
+            "results": results,
+        }
 
     @mcp.tool()
     async def get_blueprint_configlets(

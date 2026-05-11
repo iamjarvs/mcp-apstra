@@ -3,6 +3,7 @@ from typing import Annotated
 from fastmcp import Context
 from pydantic import Field
 
+from handlers.blueprints import resolve_blueprints
 from handlers.run_commands import handle_run_commands
 
 
@@ -30,7 +31,15 @@ def register(mcp):
             Field(default=None, description=(
                 "Hardware chassis serial of the target switch (e.g. '5254002D005F'). "
                 "Use the system_id field from get_systems — NOT the id field. "
-                "Omit to run on every onboarded switch in the blueprint (parallel)."
+                "Prefer hostname if you know it; omit both to run on every switch."
+            )),
+        ] = None,
+        hostname: Annotated[
+            str | None,
+            Field(default=None, description=(
+                "Device hostname/label as shown in Apstra (e.g. 'Leaf2', 'Spine1'). "
+                "Automatically resolved to system_id — use this instead of looking up "
+                "the hardware serial manually. Ignored if system_id is also provided."
             )),
         ] = None,
         output_format: Annotated[
@@ -67,21 +76,49 @@ def register(mcp):
         If a result has result="commandShellError", read the llm_hint field, look up the correct
         syntax with get_junos_show_commands, and retry with corrected commands.
 
-        Omit system_id to run across the whole blueprint concurrently (can produce a large
-        response on large fabrics — scope to a specific system when possible).
+        Omit system_id and hostname to run across the whole blueprint concurrently (can produce
+        a large response on large fabrics — scope to a specific system when possible).
 
         Returns: systems (list with system_id, system_label, endpoint, status, command_results
         (list with command, status, output, error)), system_count.
         Data source: live Apstra fetchcmd API (real-time device CLI).
         """
-        return await handle_run_commands(
-            ctx.lifespan_context["sessions"],
-            ctx.lifespan_context["graph_registry"],
-            blueprint_id,
-            commands,
-            system_id,
-            instance_name,
-            timeout_seconds,
-            output_format,
-            max_concurrent_systems,
-        )
+        sessions = ctx.lifespan_context["sessions"]
+        blu_list = await resolve_blueprints(sessions, blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'", "hint": "Call get_blueprints to list available blueprints and their labels."}
+
+        # Resolve hostname → system_id if hostname provided and system_id is not
+        resolved_system_id = system_id
+        if hostname and not system_id:
+            try:
+                from handlers.systems import handle_get_systems
+                registry = ctx.lifespan_context["graph_registry"]
+                sys_result = await handle_get_systems(sessions, registry, blu_list[0]["id"], instance_name)
+                systems = sys_result.get("systems", [])
+                match = next((s for s in systems if s.get("label", "").lower() == hostname.lower()), None)
+                if not match:
+                    available = [s.get("label") for s in systems]
+                    return {"error": f"No device with hostname '{hostname}' found in blueprint.", "available_hostnames": available}
+                resolved_system_id = match["system_id"]
+            except Exception as exc:
+                return {"error": f"Failed to resolve hostname '{hostname}' to system_id: {exc}"}
+
+        results = []
+        for bp in blu_list:
+            r = await handle_run_commands(
+                sessions,
+                ctx.lifespan_context["graph_registry"],
+                bp["id"],
+                commands,
+                system_id=resolved_system_id,
+                instance_name=instance_name,
+                timeout_seconds=timeout_seconds,
+                output_format=output_format,
+                max_concurrent_systems=max_concurrent_systems,
+            )
+            results.append(r)
+
+        if len(results) == 1:
+            return results[0]
+        return {"blueprint_count": len(results), "results": results}

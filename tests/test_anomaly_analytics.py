@@ -636,18 +636,6 @@ class TestGetAnomalyTrendTool:
         assert result["device_count"] == 0
         store.close()
 
-    async def test_hours_back_clamped(self):
-        from tools.anomaly_analytics import register
-        store = make_store()
-        stub = StubMCP()
-        register(stub)
-        ctx = make_ctx(store)
-        result = await stub.tools["get_anomaly_trend"](
-            blueprint_id=BP, anomaly_type="mac", hours_back=9999, ctx=ctx
-        )
-        assert result["hours_back"] == 168
-        store.close()
-
     async def test_bucket_size_scales_with_window(self):
         from tools.anomaly_analytics import register
         store = make_store()

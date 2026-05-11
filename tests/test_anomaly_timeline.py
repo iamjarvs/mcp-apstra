@@ -142,6 +142,31 @@ class TestAnomalyStoreQuery:
         assert len(events) == 3
         store.close()
 
+    def test_query_events_page_returns_has_more_and_cursor(self):
+        store = self._populated_store()
+
+        page_1 = store.query_events_page(BP, limit=2)
+        assert page_1["returned_count"] == 2
+        assert page_1["has_more"] is True
+        assert page_1["next_cursor"] is not None
+
+        page_2 = store.query_events_page(
+            BP,
+            limit=2,
+            cursor_timestamp=page_1["next_cursor"]["cursor_timestamp"],
+            cursor_event_id=page_1["next_cursor"]["cursor_event_id"],
+        )
+        assert page_2["returned_count"] == 1
+        assert page_2["has_more"] is False
+        assert page_2["next_cursor"] is None
+        store.close()
+
+    def test_query_events_page_rejects_partial_cursor(self):
+        store = self._populated_store()
+        with pytest.raises(ValueError, match="must be provided together"):
+            store.query_events_page(BP, limit=2, cursor_timestamp="2026-04-04T12:00:00Z")
+        store.close()
+
     def test_query_raised_only(self):
         store = self._populated_store()
         events = store.query_events(BP, raised_only=True)
@@ -413,8 +438,11 @@ class TestBackfill:
         store.close()
 
     async def test_persistent_anomaly_gets_synthetic_raise_event(self):
-        """BGP/cabling anomalies with detected_at pre-dating the window have no
-        trace events within 7 days.  The poller should write a synthetic raise."""
+        """BGP/cabling anomalies with detected_at pre-dating the 30-day window
+        still appear as active because the counts+snapshot backfill captures
+        them: the anomaly is visible in the count-change snapshot so a
+        snapshot_backfill raise event is written; and if it wasn't in any
+        change-point snapshot it is captured via live_reconcile."""
         from handlers.anomaly_poller import _backfill
 
         store = make_store()
@@ -423,7 +451,7 @@ class TestBackfill:
 
         persistent = {
             **BGP_A,
-            "detected_at": "2026-01-29T20:00:24Z",  # 70 days ago — before trace window
+            "detected_at": "2026-01-29T20:00:24Z",  # 70 days ago — pre-window
         }
 
         with (
@@ -441,9 +469,10 @@ class TestBackfill:
 
         active = store.get_currently_active(BP)
         assert any(a["anomaly_type"] == "bgp" for a in active), \
-            "persistent BGP anomaly should appear as active via synthetic raise event"
+            "persistent BGP anomaly should appear as active after backfill"
         events = store.query_events(BP, anomaly_type="bgp")
-        assert any(e.get("source") == "synthetic_raise" for e in events)
+        assert any(e.get("raised") is True for e in events), \
+            "at least one raise event should exist for the persistent BGP anomaly"
         store.close()
 
 
@@ -640,11 +669,14 @@ class TestGetAnomalyEventsTool:
 
     async def test_raised_only_filter(self):
         from tools.anomaly_timeline import register
+        from datetime import datetime, timezone, timedelta
 
         store = make_store()
         aid = store.upsert_anomaly(BP, INST, BGP_A)
-        store.insert_event(aid, "2026-04-09T10:00:00Z", raised=True,  actual=None, source="t")
-        store.insert_event(aid, "2026-04-09T11:00:00Z", raised=False, actual=None, source="t")
+        ts_raise = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts_clear = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        store.insert_event(aid, ts_raise, raised=True,  actual=None, source="t")
+        store.insert_event(aid, ts_clear, raised=False, actual=None, source="t")
 
         captured = {}
         class StubMCP:
@@ -660,6 +692,53 @@ class TestGetAnomalyEventsTool:
             blueprint_id=BP, hours_back=48, raised_only=True, ctx=ctx
         )
         assert all(e["raised"] for e in result["events"])
+        store.close()
+
+    async def test_pagination_exposes_next_cursor(self):
+        from tools.anomaly_timeline import register
+        from datetime import datetime, timezone, timedelta
+
+        store = make_store()
+        aid = store.upsert_anomaly(BP, INST, BGP_A)
+        ts_1 = (datetime.now(timezone.utc) - timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts_2 = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ts_3 = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        store.insert_event(aid, ts_1, raised=True, actual=None, source="t")
+        store.insert_event(aid, ts_2, raised=False, actual=None, source="t")
+        store.insert_event(aid, ts_3, raised=True, actual=None, source="t")
+
+        captured = {}
+        class StubMCP:
+            def tool(self):
+                def decorator(fn):
+                    captured[fn.__name__] = fn
+                    return fn
+                return decorator
+
+        register(StubMCP())
+        ctx = make_ctx(store)
+
+        page_1 = await captured["get_anomaly_events"](
+            blueprint_id=BP,
+            hours_back=48,
+            limit=2,
+            ctx=ctx,
+        )
+        assert page_1["event_count"] == 2
+        assert page_1["pagination"]["has_more"] is True
+        assert page_1["pagination"]["next_cursor"] is not None
+
+        cursor = page_1["pagination"]["next_cursor"]
+        page_2 = await captured["get_anomaly_events"](
+            blueprint_id=BP,
+            hours_back=48,
+            limit=2,
+            cursor_timestamp=cursor["cursor_timestamp"],
+            cursor_event_id=cursor["cursor_event_id"],
+            ctx=ctx,
+        )
+        assert page_2["event_count"] == 1
+        assert page_2["pagination"]["has_more"] is False
         store.close()
 
 
@@ -712,4 +791,33 @@ class TestGetSummaryTool:
         assert result["backfill_ready"] is True
         # by_type counts events in the time window; storm-old events may not appear
         assert isinstance(result["by_type"], list)
+        store.close()
+
+    async def test_summary_supports_14_day_window(self):
+        from tools.anomaly_timeline import register
+        from datetime import datetime, timezone, timedelta
+
+        store = make_store()
+        aid = store.upsert_anomaly(BP, INST, BGP_A)
+        ts_recent = (datetime.now(timezone.utc) - timedelta(hours=4)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        store.insert_event(aid, ts_recent, raised=True, actual=None, source="t")
+        store.set_poll_state(BP, INST, {}, {}, backfill_complete=True)
+
+        captured = {}
+        class StubMCP:
+            def tool(self):
+                def decorator(fn):
+                    captured[fn.__name__] = fn
+                    return fn
+                return decorator
+
+        register(StubMCP())
+        ctx = make_ctx(store)
+        result = await captured["get_anomaly_summary"](
+            blueprint_id=BP,
+            time_window="14-day",
+            ctx=ctx,
+        )
+        assert result["time_window"] == "14-day"
+        assert "events_in_window" in result
         store.close()

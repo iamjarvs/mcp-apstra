@@ -3,6 +3,7 @@ from typing import Annotated
 from fastmcp import Context
 from pydantic import Field
 
+from handlers.blueprints import resolve_blueprints
 from handlers.config_rendering import handle_get_rendered_config
 
 
@@ -69,11 +70,14 @@ def register(mcp):
         (dict of child block text when subsections param used), configlets.
         Data source: live Apstra API (reflects current committed design intent).
         """
-        return await handle_get_rendered_config(
-            ctx.lifespan_context["sessions"],
-            blueprint_id,
-            system_id,
-            sections,
-            subsections,
-            instance_name,
-        )
+        sessions = ctx.lifespan_context["sessions"]
+        blu_list = await resolve_blueprints(sessions, blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        results = []
+        for bp in blu_list:
+            r = await handle_get_rendered_config(
+                sessions, bp["id"], system_id, sections, subsections, instance_name,
+            )
+            results.append(r)
+        return results[0] if len(results) == 1 else {"blueprint_count": len(results), "results": results}

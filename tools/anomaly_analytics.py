@@ -33,8 +33,8 @@ def register(mcp):
         ] = None,
         hours_back: Annotated[
             int,
-            Field(default=24, description="Look-back window (1–168 hours). Default 24.", ge=1, le=168),
-        ] = 24,
+            Field(default=168, description="Look-back window in hours (>=1). Default 168 (7 days).", ge=1),
+        ] = 168,
         instance_name: Annotated[
             str | None,
             Field(default=None, description="Apstra instance name. Do not ask the user for this — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
@@ -79,7 +79,7 @@ def register(mcp):
             return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
         blueprint_id = blu_list[0]["id"]
 
-        hours_back = max(1, min(hours_back, 168))
+        hours_back = max(1, hours_back)
         since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
 
         if hours_back <= 6:
@@ -150,7 +150,7 @@ def register(mcp):
         ] = None,
         hours_back: Annotated[
             int,
-            Field(default=168, description="Look-back window (1–168 hours). Default 168 (full 7 days).", ge=1, le=168),
+            Field(default=168, description="Look-back window in hours (>=1). Default 168 (7 days).", ge=1),
         ] = 168,
         instance_name: Annotated[
             str | None,
@@ -191,7 +191,7 @@ def register(mcp):
             return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
         blueprint_id = blu_list[0]["id"]
 
-        hours_back = max(1, min(hours_back, 168))
+        hours_back = max(1, hours_back)
         since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
 
         raises = store.get_raises_in_window(
@@ -264,7 +264,7 @@ def register(mcp):
         ] = None,
         hours_back: Annotated[
             int,
-            Field(default=168, description="Look-back window (1–168 hours). Default 168 (full 7 days).", ge=1, le=168),
+            Field(default=168, description="Look-back window in hours (>=1). Default 168 (7 days).", ge=1),
         ] = 168,
         instance_name: Annotated[
             str | None,
@@ -303,7 +303,7 @@ def register(mcp):
             return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
         blueprint_id = blu_list[0]["id"]
 
-        hours_back = max(1, min(hours_back, 168))
+        hours_back = max(1, hours_back)
         since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
 
         episodes = store.get_fault_episodes(
@@ -388,7 +388,7 @@ def register(mcp):
         blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         hours_back: Annotated[
             int,
-            Field(default=168, description="Look-back window (1–168 hours). Default 168 (full 7 days).", ge=1, le=168),
+            Field(default=168, description="Look-back window in hours (>=1). Default 168 (7 days).", ge=1),
         ] = 168,
         instance_name: Annotated[
             str | None,
@@ -429,7 +429,7 @@ def register(mcp):
             return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
         blueprint_id = blu_list[0]["id"]
 
-        hours_back = max(1, min(hours_back, 168))
+        hours_back = max(1, hours_back)
         since = (datetime.now(timezone.utc) - timedelta(hours=hours_back)).isoformat()
 
         rows = store.get_device_type_matrix(
@@ -506,8 +506,8 @@ def register(mcp):
         blueprint_id: Annotated[str | None, Field(default=None, description=_BP_DESC)] = None,
         hours_back: Annotated[
             int,
-            Field(default=24, description="Look-back window (1–168 hours). Default 24.", ge=1, le=168),
-        ] = 24,
+            Field(default=168, description="Look-back window in hours (>=1). Default 168 (7 days).", ge=1),
+        ] = 168,
         idle_gap_seconds: Annotated[
             int,
             Field(
@@ -568,7 +568,7 @@ def register(mcp):
             return {"blueprint_count": len(results), "blueprint_ref": blueprint_id, "results": results}
         blueprint_id = blu_list[0]["id"]
 
-        hours_back        = max(1, min(hours_back, 168))
+        hours_back        = max(1, hours_back)
         idle_gap_seconds  = max(5, min(idle_gap_seconds, 3600))
         min_cluster_size  = max(1, min_cluster_size)
 

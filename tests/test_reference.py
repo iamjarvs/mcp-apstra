@@ -1,14 +1,89 @@
+import asyncio
+import re
+
 import pytest
 
-from tools.reference import _GUIDE_PATH
+from tools.reference import _GUIDE_PATH, register
 
 
-# ---------------------------------------------------------------------------
-# Guide file
-# ---------------------------------------------------------------------------
+SECTION_NAME_TO_NUMBER = {
+    "building_blocks": 2,
+    "three_stage_clos": 3,
+    "five_stage_clos": 4,
+    "collapsed_fabric": 5,
+    "access_switches": 6,
+    "dci_ott": 7,
+    "dci_stitching": 8,
+    "routing_policy": 9,
+    "config_reading": 1,
+    "quick_reference": 10,
+}
+
+EXPECTED_JUNOS_CATEGORIES = {
+    "routing",
+    "bgp",
+    "bfd",
+    "evpn",
+    "vxlan",
+    "mac",
+    "vrf_routing_instances",
+    "interfaces",
+    "optical_diagnostics",
+    "spanning_tree",
+    "connectivity_testing",
+    "ntp_dns_services",
+    "logs_events",
+    "security",
+    "system",
+}
+
+
+class StubMCP:
+    def __init__(self):
+        self.tools = {}
+        self.resources = {}
+
+    def tool(self):
+        def decorator(fn):
+            self.tools[fn.__name__] = fn
+            return fn
+
+        return decorator
+
+    def resource(self, uri):
+        def decorator(fn):
+            self.resources[uri] = fn
+            return fn
+
+        return decorator
+
+
+@pytest.fixture
+def tools():
+    mcp = StubMCP()
+    register(mcp)
+    return mcp.tools
+
+
+def _run(coro):
+    return asyncio.run(coro)
+
+
+def _extract_numbered_sections(content: str) -> dict[int, str]:
+    matches = list(re.finditer(r"^##\s+(\d+)\.\s+.+$", content, flags=re.MULTILINE))
+    appendix = re.search(r"^##\s+Appendix:", content, flags=re.MULTILINE)
+    fallback_end = appendix.start() if appendix else len(content)
+
+    out = {}
+    for idx, match in enumerate(matches):
+        number = int(match.group(1))
+        start = match.start()
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else fallback_end
+        out[number] = content[start:end]
+    return out
+
 
 class TestGuideFile:
-
     def test_guide_file_exists(self):
         assert _GUIDE_PATH.exists(), f"Reference guide not found at {_GUIDE_PATH}"
 
@@ -17,77 +92,102 @@ class TestGuideFile:
         assert len(content) > 5000
 
     def test_guide_is_valid_utf8(self):
-        # Will raise UnicodeDecodeError if not valid UTF-8
         _GUIDE_PATH.read_text(encoding="utf-8")
 
-    def test_guide_contains_architecture_sections(self):
-        content = _GUIDE_PATH.read_text(encoding="utf-8")
-        assert "3-Stage Clos" in content or "3-stage" in content.lower()
-        assert "5-Stage Clos" in content or "5-stage" in content.lower()
-        assert "Collapsed Fabric" in content or "collapsed" in content.lower()
 
-    def test_guide_contains_bgp_content(self):
-        content = _GUIDE_PATH.read_text(encoding="utf-8")
-        assert "BGP" in content
-        assert "l3clos-l" in content
-        assert "l3clos-s" in content
+class TestReferenceTools:
+    def test_overview_returns_all_10_sections(self, tools):
+        result = _run(tools["get_reference_design_overview"]())
+        assert "sections" in result
+        assert len(result["sections"]) == 10
+        returned = [s["name"] for s in result["sections"]]
+        assert set(returned) == set(SECTION_NAME_TO_NUMBER.keys())
+        assert all(s.get("description") for s in result["sections"])
 
-    def test_guide_contains_evpn_content(self):
-        content = _GUIDE_PATH.read_text(encoding="utf-8")
-        assert "EVPN" in content
-        assert "mac-vrf" in content
-        assert "VNI" in content
+    def test_section_routing_policy_matches_guide_section_9(self, tools):
+        guide = _GUIDE_PATH.read_text(encoding="utf-8")
+        expected = _extract_numbered_sections(guide)[9]
 
-    def test_guide_contains_dci_content(self):
-        content = _GUIDE_PATH.read_text(encoding="utf-8")
-        assert "DCI" in content
-        assert "Stitching" in content or "stitching" in content
+        result = _run(tools["get_reference_design_section"](section="routing_policy"))
+        assert result["section"] == "routing_policy"
+        assert result["title"] == "9. Cross-Cutting Patterns and Policies"
+        assert result["content"] == expected
 
-    def test_guide_contains_community_architecture(self):
-        content = _GUIDE_PATH.read_text(encoding="utf-8")
-        # Loop-prevention community values documented in the guide
-        assert "FROM_SPINE_FABRIC_TIER" in content
-        assert "FROM_SPINE_EVPN_TIER" in content
+    def test_section_unknown_returns_structured_error(self, tools):
+        result = _run(tools["get_reference_design_section"](section="unknown"))
+        assert result["error"] == "unknown_section"
+        assert "valid_sections" in result
+        assert set(result["valid_sections"]) == set(SECTION_NAME_TO_NUMBER.keys())
 
-    def test_guide_contains_policy_section(self):
-        content = _GUIDE_PATH.read_text(encoding="utf-8")
-        assert "LEAF_TO_SPINE_FABRIC_OUT" in content
-        assert "SPINE_TO_LEAF_FABRIC_OUT" in content
-
-
-# ---------------------------------------------------------------------------
-# get_reference_design_context handler (via the module-level path helper)
-# ---------------------------------------------------------------------------
-
-class TestGetReferenceDesignContext:
-
-    async def test_returns_dict_with_expected_keys(self):
-        # Test the handler logic directly without going through MCP
-        # by simulating what the tool function does
-        content = _GUIDE_PATH.read_text(encoding="utf-8")
-        result = {
-            "title": "Apstra Reference Design Guide",
-            "format": "markdown",
-            "content": content,
-        }
+    def test_full_context_still_returns_complete_guide_unchanged(self, tools):
+        guide = _GUIDE_PATH.read_text(encoding="utf-8")
+        result = _run(tools["get_reference_design_context"]())
         assert result["title"] == "Apstra Reference Design Guide"
         assert result["format"] == "markdown"
-        assert len(result["content"]) > 5000
+        assert result["content"] == guide
 
-    async def test_content_contains_all_major_sections(self):
-        content = _GUIDE_PATH.read_text(encoding="utf-8")
-        sections = [
-            "How to Read",
-            "Common Building Blocks",
-            "3-Stage Clos",
-            "5-Stage Clos",
-            "Collapsed Fabric",
-            "Access Switch",
-            "DCI",
-            "BGP Community",
-            "Quick Reference",
-        ]
-        for phrase in sections:
-            assert phrase in content or phrase.lower() in content.lower(), (
-                f"Expected section '{phrase}' not found in guide"
-            )
+    def test_all_section_payloads_are_byte_identical_to_source(self, tools):
+        guide = _GUIDE_PATH.read_text(encoding="utf-8")
+        numbered = _extract_numbered_sections(guide)
+
+        for section_name, section_number in SECTION_NAME_TO_NUMBER.items():
+            result = _run(tools["get_reference_design_section"](section=section_name))
+            assert result["content"] == numbered[section_number]
+
+
+class TestJunosCommandTools:
+    def test_get_junos_command_categories_returns_all_15(self, tools):
+        result = _run(tools["get_junos_command_categories"]())
+        assert "categories" in result
+        assert len(result["categories"]) == 15
+        names = {entry["name"] for entry in result["categories"]}
+        assert names == EXPECTED_JUNOS_CATEGORIES
+        assert all(entry.get("description") for entry in result["categories"])
+
+    def test_show_commands_filter_returns_only_requested_categories(self, tools):
+        result = _run(tools["get_junos_show_commands"](categories=["bgp", "bfd"]))
+        names = [entry["name"] for entry in result["categories"]]
+        assert set(names) == {"bgp", "bfd"}
+
+    def test_show_commands_without_categories_returns_all(self, tools):
+        result = _run(tools["get_junos_show_commands"]())
+        names = {entry["name"] for entry in result["categories"]}
+        assert names == EXPECTED_JUNOS_CATEGORIES
+
+    def test_show_commands_unknown_category_returns_partial_plus_warning(self, tools):
+        result = _run(
+            tools["get_junos_show_commands"](categories=["bgp", "not_a_real_category"])
+        )
+        names = [entry["name"] for entry in result["categories"]]
+
+        assert names == ["bgp"]
+        assert result["warnings"]
+        assert (
+            result["warnings"][0]
+            == "Unknown category ignored: 'not_a_real_category'. Valid categories: "
+            "routing, bgp, bfd, evpn, vxlan, mac, vrf_routing_instances, "
+            "interfaces, optical_diagnostics, spanning_tree, connectivity_testing, "
+            "ntp_dns_services, logs_events, security, system"
+        )
+        assert result["error"] == "unknown_category"
+        assert "unknown_categories" not in result
+        assert "valid_categories" not in result
+
+    def test_user_style_workflow_scoped_reference_and_scoped_cli(self, tools):
+        overview = _run(tools["get_reference_design_overview"]())
+        assert any(s["name"] == "routing_policy" for s in overview["sections"])
+
+        section = _run(tools["get_reference_design_section"](section="routing_policy"))
+        assert "BGP Community Architecture" in section["content"]
+
+        cat_index = _run(tools["get_junos_command_categories"]())
+        assert any(c["name"] == "bgp" for c in cat_index["categories"])
+
+        commands = _run(
+            tools["get_junos_show_commands"](categories=["bgp", "bfd", "routing"])
+        )
+        command_categories = {entry["name"] for entry in commands["categories"]}
+        assert command_categories == {"bgp", "bfd", "routing"}
+
+        bgp_bucket = next(entry for entry in commands["categories"] if entry["name"] == "bgp")
+        assert any(cmd["command"] == "show bgp summary" for cmd in bgp_bucket["commands"])

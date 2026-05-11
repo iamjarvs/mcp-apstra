@@ -238,6 +238,18 @@ class CounterStore:
     def close(self):
         self._con.close()
 
+    def reset(self):
+        """
+        Clear all persisted counter snapshots while keeping schema and indexes.
+
+        Used when the server is configured to force a fresh telemetry baseline on startup.
+        """
+        with self._lock:
+            self._con.execute("DELETE FROM counter_snapshots")
+            self._con.execute("DELETE FROM interfaces")
+            self._con.commit()
+            self._con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
     # ── Query helpers ─────────────────────────────────────────────────────────
 
     def _get_snapshots_raw(

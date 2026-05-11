@@ -1,10 +1,224 @@
+import re
 from pathlib import Path
+from typing import Annotated
 
 from fastmcp import Context
+from pydantic import Field
 
 # Resolved once at import time — path is relative to this file's location
 # (tools/ → workspace root → _ref_arch/)
 _GUIDE_PATH = Path(__file__).parent.parent / "_ref_arch" / "APSTRA-REFERENCE-DESIGN-GUIDE.md"
+
+
+_REFERENCE_SECTION_DEFINITIONS = [
+    {
+        "name": "building_blocks",
+        "section_number": 2,
+        "title": "2. Common Building Blocks",
+        "description": (
+            "Core configuration elements present in every Apstra fabric: loopbacks, "
+            "fabric links, IRB anycast gateway, ESI LAG, underlay/overlay BGP, mac-vrf, "
+            "L3 VRFs, and route policy framework. Fetch this when interpreting rendered "
+            "configs or explaining individual design constructs."
+        ),
+    },
+    {
+        "name": "three_stage_clos",
+        "section_number": 3,
+        "title": "3. Reference Design: 3-Stage Clos Fabric",
+        "description": (
+            "Spine/leaf architecture, role boundaries, BGP groups, and inter-device flow in "
+            "the standard EVPN/VXLAN fabric model. Fetch this for baseline Clos topology "
+            "questions or spine/leaf role explanations."
+        ),
+    },
+    {
+        "name": "five_stage_clos",
+        "section_number": 4,
+        "title": "4. Reference Design: 5-Stage Clos Fabric",
+        "description": (
+            "Super-spine and pod hierarchy, additional policy community tiers, and scaling "
+            "behavior relative to 3-stage Clos. Fetch this when triaging multi-pod fabrics "
+            "or super-spine related behavior."
+        ),
+    },
+    {
+        "name": "collapsed_fabric",
+        "section_number": 5,
+        "title": "5. Reference Design: Collapsed Fabric",
+        "description": (
+            "Combined spine/leaf/border behavior, WAN peering via l3rtr, EVPN gateway "
+            "patterns, and mixed-role operational implications. Fetch this when analyzing "
+            "collapsed core devices with both internal and external BGP responsibilities."
+        ),
+    },
+    {
+        "name": "access_switches",
+        "section_number": 6,
+        "title": "6. Access Switches (All Designs)",
+        "description": (
+            "Access-tier topology and operational behavior, including BGP to upstream peer, "
+            "no-core-isolation, and EVPN edge specifics. Fetch this for access-edge issues, "
+            "especially when STP and server-facing behavior are involved."
+        ),
+    },
+    {
+        "name": "dci_ott",
+        "section_number": 7,
+        "title": "7. DCI - EVPN Over The Top (OTT)",
+        "description": (
+            "Overlay extension across existing IP transport, border leaf OTT configuration, "
+            "evpn-gw group behavior, and transport assumptions. Fetch this for DCI OTT "
+            "design, peering, and route-propagation questions."
+        ),
+    },
+    {
+        "name": "dci_stitching",
+        "section_number": 8,
+        "title": "8. DCI - EVPN Stitching",
+        "description": (
+            "Multi-domain EVPN stitching model, interconnect block behavior, VNI translation, "
+            "and chaining patterns. Fetch this when debugging inter-domain EVPN handoff or "
+            "translation behavior."
+        ),
+    },
+    {
+        "name": "routing_policy",
+        "section_number": 9,
+        "title": "9. Cross-Cutting Patterns and Policies",
+        "description": (
+            "BGP community architecture, JunOS route policy processing model, common policy "
+            "failure modes, and full loop-prevention trace. Fetch this for route leaks, "
+            "missing routes, unexpected policy outcomes, or community-tag analysis."
+        ),
+    },
+    {
+        "name": "config_reading",
+        "section_number": 1,
+        "title": "1. How to Read an Apstra JunOS Configuration",
+        "description": (
+            "Guide to reading Apstra-rendered JunOS config structure, including replace: "
+            "behavior and hierarchy semantics. Fetch this when users ask why config is "
+            "rendered in a certain form or how to interpret generated stanzas."
+        ),
+    },
+    {
+        "name": "quick_reference",
+        "section_number": 10,
+        "title": "10. Configuration Section Quick Reference",
+        "description": (
+            "Fast lookup for interface naming conventions, BGP group name dictionary, "
+            "routing-instance types, and common config-section distinctions. Fetch this only "
+            "when you are uncertain about a specific naming convention or syntax, not as a "
+            "default companion to other sections."
+        ),
+    },
+]
+
+_JUNOS_CATEGORY_OVERVIEW = [
+    {
+        "name": "routing",
+        "description": "Routing table inspection, route verification, and forwarding table checks.",
+    },
+    {
+        "name": "bgp",
+        "description": "BGP session state, prefix exchange, and policy troubleshooting commands.",
+    },
+    {
+        "name": "bfd",
+        "description": "BFD session status and detail; use when BGP sessions flap or drop quickly.",
+    },
+    {
+        "name": "evpn",
+        "description": "EVPN control-plane state including MAC/IP database and route-type visibility.",
+    },
+    {
+        "name": "vxlan",
+        "description": "VXLAN tunnel, VNI, and VTEP operational state.",
+    },
+    {
+        "name": "mac",
+        "description": "L2 MAC table, ARP, and IPv6 neighbor discovery checks.",
+    },
+    {
+        "name": "vrf_routing_instances",
+        "description": "VRF and routing-instance visibility including per-VRF routes and ARP.",
+    },
+    {
+        "name": "interfaces",
+        "description": "Physical/logical interface state, counters, LAG, and LLDP commands.",
+    },
+    {
+        "name": "optical_diagnostics",
+        "description": "Optical TX/RX power and transceiver health diagnostics.",
+    },
+    {
+        "name": "spanning_tree",
+        "description": "STP/RSTP/MSTP checks for edge and access-facing switching paths.",
+    },
+    {
+        "name": "connectivity_testing",
+        "description": "Operational ping and traceroute commands for targeted reachability tests.",
+    },
+    {
+        "name": "ntp_dns_services",
+        "description": "NTP synchronization, DNS lookup, and management service checks.",
+    },
+    {
+        "name": "logs_events",
+        "description": "System logs and event history for fault correlation and timing.",
+    },
+    {
+        "name": "security",
+        "description": "Firewall counters, routing policy hits, and hardware forwarding errors.",
+    },
+    {
+        "name": "system",
+        "description": "Platform version, alarms, resource utilization, and hardware inventory.",
+    },
+]
+
+_REFERENCE_SECTIONS_CACHE: dict[str, dict] | None = None
+
+
+def _extract_numbered_guide_sections(guide_content: str) -> dict[int, str]:
+    section_matches = list(re.finditer(r"^##\s+(\d+)\.\s+.+$", guide_content, flags=re.MULTILINE))
+    appendix_match = re.search(r"^##\s+Appendix:", guide_content, flags=re.MULTILINE)
+    numbered_sections_end = appendix_match.start() if appendix_match else len(guide_content)
+
+    numbered_sections: dict[int, str] = {}
+    for index, match in enumerate(section_matches):
+        section_number = int(match.group(1))
+        start = match.start()
+        end = (
+            section_matches[index + 1].start()
+            if index + 1 < len(section_matches)
+            else numbered_sections_end
+        )
+        numbered_sections[section_number] = guide_content[start:end]
+
+    return numbered_sections
+
+
+def _get_reference_section_payloads() -> dict[str, dict]:
+    global _REFERENCE_SECTIONS_CACHE
+
+    if _REFERENCE_SECTIONS_CACHE is not None:
+        return _REFERENCE_SECTIONS_CACHE
+
+    guide_content = _GUIDE_PATH.read_text(encoding="utf-8")
+    numbered_sections = _extract_numbered_guide_sections(guide_content)
+
+    _REFERENCE_SECTIONS_CACHE = {}
+    for section_def in _REFERENCE_SECTION_DEFINITIONS:
+        content = numbered_sections.get(section_def["section_number"], "")
+        _REFERENCE_SECTIONS_CACHE[section_def["name"]] = {
+            "section": section_def["name"],
+            "title": section_def["title"],
+            "content": content,
+        }
+
+    return _REFERENCE_SECTIONS_CACHE
 
 
 def register(mcp):
@@ -82,6 +296,14 @@ def register(mcp):
         subsections. The guide is written specifically for LLM interpretation
         of Apstra-managed JunOS configurations and Apstra design concepts.
 
+        PREFERRED USAGE:
+        - Call get_reference_design_overview first when the relevant section
+          is not obvious.
+        - Call get_reference_design_section(section=...) to fetch only the
+          specific section needed for the current question.
+        - Call this full-guide tool only when a complete architecture overview
+          is explicitly requested.
+
         Returns:
             - title:   "Apstra Reference Design Guide"
             - format:  "markdown"
@@ -96,7 +318,122 @@ def register(mcp):
         }
 
     @mcp.tool()
+    async def get_reference_design_overview(
+        ctx: Context = None,
+    ) -> dict:
+        """
+        Return a compact index of available Apstra reference guide sections.
+
+        Call this when you need architectural context but are not yet certain
+        which section is relevant. Use the returned section names as input to
+        get_reference_design_section.
+
+        Common scenario-to-section mapping (use this to pick the right section
+        after reviewing the overview):
+
+        - BGP anomaly, missing routes, community questions -> routing_policy
+        - Interpreting rendered config, replace:, no-nexthop-change ->
+          building_blocks or config_reading
+        - Spine/leaf roles, fabric data flow -> three_stage_clos
+        - Super-spine, pod structure, 5-stage scaling -> five_stage_clos
+        - Collapsed core, WAN BGP, evpn-gw group -> collapsed_fabric
+        - Access edge, no-core-isolation, ARP suppression -> access_switches
+        - DCI over the top, evpn-gw peering, TTL 30 -> dci_ott
+        - Multi-domain EVPN, VNI translation -> dci_stitching
+        - Interface naming, BGP group names, routing-instance types ->
+          quick_reference
+
+        Returns:
+            - sections: list of {name, description}
+        """
+        return {
+            "sections": [
+                {
+                    "name": section_def["name"],
+                    "description": section_def["description"],
+                }
+                for section_def in _REFERENCE_SECTION_DEFINITIONS
+            ]
+        }
+
+    @mcp.tool()
+    async def get_reference_design_section(
+        section: Annotated[
+            str,
+            Field(
+                description=(
+                    "Section name to retrieve. Valid values: building_blocks, "
+                    "three_stage_clos, five_stage_clos, collapsed_fabric, "
+                    "access_switches, dci_ott, dci_stitching, routing_policy, "
+                    "config_reading, quick_reference. Call "
+                    "get_reference_design_overview first if unsure which "
+                    "section applies."
+                )
+            ),
+        ],
+        ctx: Context = None,
+    ) -> dict:
+        """
+        Return the full content of one named section from the Apstra
+        Reference Design Guide.
+
+        Call after get_reference_design_overview has identified the relevant
+        section, or directly when section choice is clear from context.
+
+        Recommended mapping:
+        - BGP session anomaly, missing routes, community questions -> routing_policy
+        - Interpreting rendered config, replace:, no-nexthop-change ->
+          building_blocks or config_reading
+        - Spine/leaf roles, fabric data flow -> three_stage_clos
+        - Super-spine and pod scaling behavior -> five_stage_clos
+        - Collapsed core, WAN BGP, evpn-gw group -> collapsed_fabric
+        - Access edge behavior, no-core-isolation, ARP suppression -> access_switches
+        - DCI OTT and evpn-gw peering -> dci_ott
+        - Multi-domain EVPN and VNI translation -> dci_stitching
+        - Interface naming, BGP group names, routing-instance types -> quick_reference
+
+        Do not call get_reference_design_context (full guide) unless the user
+        explicitly requests a complete architecture overview.
+        """
+        section_key = (section or "").strip().lower()
+        valid_sections = [s["name"] for s in _REFERENCE_SECTION_DEFINITIONS]
+
+        if section_key not in valid_sections:
+            return {
+                "error": "unknown_section",
+                "requested_section": section,
+                "valid_sections": valid_sections,
+            }
+
+        section_payloads = _get_reference_section_payloads()
+        return section_payloads[section_key]
+
+    @mcp.tool()
+    async def get_junos_command_categories(
+        ctx: Context = None,
+    ) -> dict:
+        """
+        Return available JunOS command categories and when to use each one.
+
+        Call this before get_junos_show_commands when category choice is
+        unclear. Use the returned category names with
+        get_junos_show_commands(categories=[...]) to fetch only the commands
+        needed for the current investigation.
+        """
+        return {"categories": [dict(category) for category in _JUNOS_CATEGORY_OVERVIEW]}
+
+    @mcp.tool()
     async def get_junos_show_commands(
+        categories: Annotated[
+            list[str] | None,
+            Field(
+                default=None,
+                description=(
+                    "Optional list of category names to return. "
+                    "When omitted or null, all categories are returned."
+                ),
+            ),
+        ] = None,
         ctx: Context = None,
     ) -> dict:
         """
@@ -134,8 +471,24 @@ def register(mcp):
         whether JSON output is supported, and any important notes.
         Placeholders in angle brackets (e.g. <prefix>) must be replaced with
         real values before passing to run_device_commands.
+
+        PREFERRED USAGE:
+        - Call get_junos_command_categories first to identify the relevant
+          category.
+        - Then call this tool with categories=[<name>] to fetch only the
+          required command set.
+
+        Common category combinations by scenario:
+        - BGP anomaly         -> categories=["bgp", "bfd", "routing"]
+        - Interface flap      -> categories=["interfaces", "optical_diagnostics", "logs_events"]
+        - EVPN/VXLAN issue    -> categories=["evpn", "vxlan", "mac"]
+        - VRF routing problem -> categories=["vrf_routing_instances", "routing", "bgp"]
+        - General health      -> categories=["system", "interfaces", "logs_events"]
+
+        Call with no categories parameter only when you need commands across
+        many categories simultaneously or there is no clear starting point.
         """
-        return {
+        reference = {
             "title": "Junos Show Command Reference",
             "platform": "Junos OS only (QFX, EX, MX, PTX series). Not applicable to non-Juniper platforms.",
             "note": (
@@ -822,3 +1175,38 @@ def register(mcp):
                 },
             ],
         }
+
+        if not categories:
+            return reference
+
+        valid_categories = [category["name"] for category in reference["categories"]]
+        requested_categories: list[str] = []
+        unknown_categories: list[str] = []
+
+        for raw_category in categories:
+            category_name = str(raw_category).strip().lower()
+            if not category_name:
+                continue
+            if category_name in valid_categories:
+                if category_name not in requested_categories:
+                    requested_categories.append(category_name)
+            elif category_name not in unknown_categories:
+                unknown_categories.append(category_name)
+
+        reference["categories"] = [
+            category
+            for category in reference["categories"]
+            if category["name"] in requested_categories
+        ]
+
+        if unknown_categories:
+            unknown_list = ", ".join(f"'{category}'" for category in unknown_categories)
+            valid_list = ", ".join(valid_categories)
+            reference["warnings"] = [
+                f"Unknown category ignored: {unknown_list}. Valid categories: {valid_list}"
+            ]
+            # Keep this key for backwards compatibility while callers migrate
+            # to the warnings list.
+            reference["error"] = "unknown_category"
+
+        return reference

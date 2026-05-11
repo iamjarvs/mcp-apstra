@@ -23,6 +23,7 @@ import httpx
 from fastmcp import Context
 from pydantic import Field
 
+from handlers.blueprints import resolve_blueprints
 from primitives import live_data_client
 
 
@@ -169,9 +170,15 @@ def register(mcp):
 
         session = target[0]
 
+        # Resolve partial label → UUID
+        blu_list = await resolve_blueprints(sessions, blueprint_id)
+        if not blu_list:
+            return {"error": f"No blueprints found matching '{blueprint_id}'"}
+        resolved_bp_id = blu_list[0]["id"]
+
         # Find the "Device Traffic" probe by label
         try:
-            probes_raw = await live_data_client.get_probes(session, blueprint_id)
+            probes_raw = await live_data_client.get_probes(session, resolved_bp_id)
         except (httpx.RemoteProtocolError, httpx.ConnectError,
                 httpx.ReadTimeout, httpx.ConnectTimeout) as exc:
             return {
@@ -194,7 +201,7 @@ def register(mcp):
         probe_id = traffic_probe["id"]
         try:
             raw = await live_data_client.query_probe_stage(
-                session, blueprint_id, probe_id,
+                session, resolved_bp_id, probe_id,
                 stage="Average Interface Counters",
             )
         except (httpx.RemoteProtocolError, httpx.ConnectError,
@@ -269,12 +276,21 @@ def register(mcp):
     @mcp.tool()
     async def get_system_telemetry(
         system_ids: Annotated[
-            list[str],
-            Field(description=(
+            list[str] | None,
+            Field(default=None, description=(
                 "One or more hardware chassis serials (e.g. ['5254002D005F', '525400F8CE53']). "
-                "Use the system_id field from get_systems — NOT the id field."
+                "Use the system_id field from get_systems — NOT the id field. "
+                "If omitted, provide blueprint_id to auto-discover all switches."
             )),
-        ],
+        ] = None,
+        blueprint_id: Annotated[
+            str | None,
+            Field(default=None, description=(
+                "Blueprint ID or partial label (e.g. 'DC1'). "
+                "When provided and system_ids is omitted, automatically fetches telemetry "
+                "for all switches in the blueprint. Use get_blueprints to list blueprints."
+            )),
+        ] = None,
         instance_name: Annotated[
             str | None,
             Field(default=None, description="Apstra instance name. Do not ask the user — leave as None to query all instances. Only set if the user explicitly names a specific instance."),
@@ -285,13 +301,17 @@ def register(mcp):
         Return the latest CPU and memory utilisation for one or more devices from Apstra streaming telemetry.
 
         Use this when asked about device resource health — whether a device is under CPU or memory
-        pressure, or to compare utilisation across a set of devices (e.g. all spines). Use
-        get_systems to discover system_id values for devices by hostname.
+        pressure, or to compare utilisation across a set of devices (e.g. all spines). Either
+        provide system_ids (hardware serials from get_systems) or provide blueprint_id to
+        automatically query all switches in a blueprint.
 
         Returns: devices (list with system_id, cpu_pct, memory_pct, last_fetched_at), sorted by
         cpu_pct descending. device_count, errors (list of failed lookups).
         Data source: live Apstra API → device streaming telemetry (30–120 s behind real-time).
         """
+        if not system_ids and not blueprint_id:
+            return {"error": "Provide either system_ids (list of hardware serials) or blueprint_id to auto-discover devices."}
+
         sessions = ctx.lifespan_context["sessions"]
         target = [s for s in sessions if instance_name is None or s.name == instance_name]
         if not target:
@@ -299,9 +319,30 @@ def register(mcp):
 
         session = target[0]
 
+        # Auto-discover system_ids from blueprint if not explicitly provided
+        resolved_system_ids = list(system_ids) if system_ids else []
+        if not resolved_system_ids and blueprint_id:
+            try:
+                blu_list = await resolve_blueprints(sessions, blueprint_id)
+                if not blu_list:
+                    return {"error": f"No blueprints found matching '{blueprint_id}'", "hint": "Call get_blueprints to list available blueprints."}
+                registry = ctx.lifespan_context["graph_registry"]
+                _SW_CYPHER = (
+                    "MATCH (sw:system) "
+                    "WHERE sw.system_type = 'switch' "
+                    "RETURN sw.system_id"
+                )
+                graph = await registry.get_or_rebuild(session, blu_list[0]["id"])
+                rows = graph.query(_SW_CYPHER)
+                resolved_system_ids = [r["sw.system_id"] for r in rows if r.get("sw.system_id")]
+                if not resolved_system_ids:
+                    return {"error": f"No switches found in blueprint '{blueprint_id}'"}
+            except Exception as exc:
+                return {"error": f"Failed to resolve switches for blueprint '{blueprint_id}': {exc}"}
+
         results = []
         errors = []
-        for sid in system_ids:
+        for sid in resolved_system_ids:
             try:
                 raw = await live_data_client.get_system_resource_util(session, sid)
                 items = raw.get("items", [])
@@ -471,13 +512,19 @@ def register(mcp):
         system_ids: list[str] | None = None
         if blueprint_id:
             try:
+                blu_list = await resolve_blueprints(sessions, blueprint_id)
+                if not blu_list:
+                    return {
+                        "error": f"No blueprints found matching '{blueprint_id}'",
+                        "hint": "Use get_blueprints to verify the blueprint_id is valid.",
+                    }
                 registry = ctx.lifespan_context["graph_registry"]
                 _SYSTEMS_CYPHER = (
                     "MATCH (sw:system) "
                     "WHERE sw.system_type = 'switch' "
                     "RETURN sw.system_id"
                 )
-                graph = await registry.get_or_rebuild(session, blueprint_id)
+                graph = await registry.get_or_rebuild(session, blu_list[0]["id"])
                 rows = graph.query(_SYSTEMS_CYPHER)
                 system_ids = [
                     r["sw.system_id"] for r in rows

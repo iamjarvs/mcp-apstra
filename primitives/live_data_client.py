@@ -1,18 +1,46 @@
+import asyncio
 import httpx
+
+# Per-session shared HTTP client.  Keyed by id(session) so each Apstra
+# instance gets exactly one long-lived connection pool, enabling TLS
+# keep-alive across all concurrent backfill snapshot calls.
+_session_clients: dict[int, httpx.AsyncClient] = {}
+_session_clients_lock = asyncio.Lock()
+
+
+async def _get_client(session) -> httpx.AsyncClient:
+    """Return a cached AsyncClient for the session, creating one if needed."""
+    sid = id(session)
+    # Fast path: client already exists
+    if sid in _session_clients:
+        client = _session_clients[sid]
+        if not client.is_closed:
+            return client
+    async with _session_clients_lock:
+        # Re-check inside lock
+        if sid in _session_clients and not _session_clients[sid].is_closed:
+            return _session_clients[sid]
+        client = httpx.AsyncClient(
+            verify=session._ssl_verify,
+            timeout=httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0),
+            limits=httpx.Limits(max_connections=40, max_keepalive_connections=20),
+        )
+        _session_clients[sid] = client
+        return client
 
 
 async def _request(session, method: str, path: str, body: dict = None) -> dict:
     token = await session.get_token()
     url = f"{session.host}{path}"
-    async with httpx.AsyncClient(verify=session._ssl_verify, timeout=30.0) as client:
-        kwargs: dict = {"headers": {"AUTHTOKEN": token}}
-        if body is not None:
-            kwargs["json"] = body
-        response = await client.request(method, url, **kwargs)
-        response.raise_for_status()
-        if response.content:
-            return response.json()
-        return {}
+    client = await _get_client(session)
+    kwargs: dict = {"headers": {"AUTHTOKEN": token}}
+    if body is not None:
+        kwargs["json"] = body
+    response = await client.request(method, url, **kwargs)
+    response.raise_for_status()
+    if response.content:
+        return response.json()
+    return {}
 
 
 async def get_anomalies(session, blueprint_id: str) -> dict:
@@ -102,6 +130,25 @@ async def get_blueprint_graph(session, blueprint_id: str) -> dict:
     because it returns version, nodes, and relationships in a single round trip.
     """
     return await _request(session, "GET", f"/api/blueprints/{blueprint_id}")
+
+
+async def get_blueprint_build_errors(
+    session,
+    blueprint_id: str,
+    mode: str = "digest",
+) -> dict:
+    """
+    Fetches blueprint build validation results from Apstra.
+
+    mode="digest" returns only version and error/warning counts.
+    mode="full" returns detailed node/relationship issues.
+    """
+    normalized_mode = "full" if str(mode).strip().lower() == "full" else "digest"
+    return await _request(
+        session,
+        "GET",
+        f"/api/blueprints/{blueprint_id}/errors?mode={normalized_mode}",
+    )
 
 
 async def get_system_config_context(session, blueprint_id: str, system_id: str) -> dict:
@@ -240,10 +287,18 @@ async def delete_fetchcmd(session, request_id: str) -> None:
 
 # ── Anomaly history / time-series APIs ────────────────────────────────────────
 
+# All anomaly types known to Apstra.  Passed explicitly to the counts API
+# so the server returns change-points for every type, not just a default subset.
+_ALL_ANOMALY_TYPES = [
+    "mac", "hostname", "interface", "config", "route",
+    "mlag", "cabling", "deployment", "bgp", "liveness", "lag",
+]
+
 async def get_anomaly_history_counts(
     session,
     blueprint_id: str,
     begin_time: str = "-7:0",
+    anomaly_types: list[str] | None = None,
 ) -> dict:
     """
     Returns a count-change timeseries for each anomaly type over the
@@ -252,10 +307,13 @@ async def get_anomaly_history_counts(
     `begin_time` uses Apstra's relative format: "-<days>:<seconds>", e.g.
     "-7:0" for seven days ago. The window always ends at the current time.
 
+    `anomaly_types` defaults to all known types if not specified, ensuring
+    the API returns change-points for every type rather than a subset.
+
     Response shape: {"counts": {"bgp": [{"count": N, "timestamp": "..."}], ...}}
     Each list entry represents a moment when the count for that type changed.
     """
-    body: dict = {}
+    body: dict = {"anomaly_types": anomaly_types or _ALL_ANOMALY_TYPES}
     if begin_time:
         body["begin_time"] = begin_time
     return await _request(
@@ -269,19 +327,26 @@ async def get_anomaly_history_snapshot(
     session,
     blueprint_id: str,
     timestamp: str,
+    anomaly_types: list[str] | None = None,
 ) -> dict:
     """
-    Returns the full set of anomalies that were active at the given
-    point-in-time timestamp (ISO-8601 UTC string).
+    Returns the set of anomalies that were active at the given point-in-time
+    timestamp (ISO-8601 UTC string).
+
+    `anomaly_types` optionally restricts the response to only those types,
+    reducing response size when only one type is of interest.
 
     Response shape: {"items": [{anomaly}], "request": {...}}
     Each item includes: identity, expected, actual, detected_at, raised,
     anomaly_type, device_hostname, role.
     """
+    body: dict = {"timestamp": timestamp}
+    if anomaly_types:
+        body["anomaly_types"] = anomaly_types
     return await _request(
         session, "POST",
         f"/api/blueprints/{blueprint_id}/anomalies-history",
-        body={"timestamp": timestamp},
+        body=body,
     )
 
 
@@ -491,3 +556,67 @@ async def get_all_systems(session) -> dict:
     `system_id` field — use `device_key`.
     """
     return await _request(session, "GET", "/api/systems")
+
+
+async def get_audit_events(
+    session,
+    begin_time: str,
+    end_time: str,
+    filter_expr: str | None = None,
+    per_page: int | None = None,
+    offset: int | None = None,
+) -> dict:
+    """
+    Queries the Apstra audit event log for a time window.
+
+    Uses POST /api/audit/events/query with ISO 8601 begin_time and end_time
+    and an optional filter expression.
+
+    filter_expr follows Apstra's filter syntax, e.g.:
+        'type in ["BlueprintCommit", "DeviceConfigChange"]'
+    Pass None (or omit) to return all event types.
+
+    begin_time and end_time must be ISO 8601 UTC strings,
+    e.g. "2026-05-11T00:00:00+00:00".
+
+    Response shape:
+      status.total_count    — total matching events
+      status.is_truncated   — true when the server capped the result set
+      status.result_code    — "successComplete" | "successTruncated" | ...
+      items                 — list of audit event records, each containing:
+        timestamp, user, user_ip, type, result, and type-specific fields
+        (blueprint_id/label for blueprint events; device_id/device_config
+        for device config events).
+    """
+    body: dict = {"begin_time": begin_time, "end_time": end_time}
+    if filter_expr:
+        body["filter"] = filter_expr
+    if per_page is not None:
+        body["per_page"] = per_page
+    if offset is not None:
+        body["offset"] = offset
+    return await _request(session, "POST", "/api/audit/events/query", body=body)
+
+
+async def get_audit_device_config(
+    session,
+    device_id: str,
+    file_name: str,
+) -> dict:
+    """
+    Retrieves the device configuration content recorded by an audit event.
+
+    Uses POST /api/audit/events/device-config.  Both parameters come
+    directly from a DeviceConfigChange or DeviceConfigDeviationAccepted
+    audit event returned by get_audit_events:
+      device_id  — the 'device_id' field on the audit event
+      file_name  — the 'device_config' field on the audit event
+
+    Returns the config content for that snapshot.
+    """
+    return await _request(
+        session,
+        "POST",
+        "/api/audit/events/device-config",
+        body={"device_id": device_id, "file_name": file_name},
+    )
