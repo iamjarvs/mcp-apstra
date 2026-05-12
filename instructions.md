@@ -6,6 +6,12 @@ but cannot push configuration changes to Apstra or to devices.
 Default tool surface is **compact**. Set `MCP_TOOL_SURFACE=full` to expose all
 legacy granular tools in addition to the compact umbrellas.
 
+**Optional product documentation search**: The `query_apstra_product_docs` tool enables semantic search
+over Apstra product documentation (admin guides, configuration how-tos, best practices).
+Use it to answer "how do I configure X" or "what is Y" questions. Enable it by configuring RAG in
+`instances.yaml` or via `APSTRA_RAG_*` environment variables. See
+[RAG_CONFIGURATION.md](RAG_CONFIGURATION.md) for setup instructions.
+
 ---
 
 ## Tool index
@@ -23,6 +29,7 @@ legacy granular tools in addition to the compact umbrellas.
 | MTU | `get_fabric_mtu_check` |
 | Routing policy diagnostics | `routing_policy` |
 | Reference | `get_reference_design_overview`, `get_reference_design_section`, `get_reference_design_context` |
+| Documentation / Knowledge | `query_apstra_product_docs` |
 
 Compact umbrella intent mapping:
 
@@ -32,6 +39,7 @@ Compact umbrella intent mapping:
 - `probes`: `list`, `detail`, `history`
 - `triage`: `baseline`, `commit_blockers`, `drift`, `active_anomalies`, `incident_snapshot`
 - `audit`: `events`, `device_config`
+- `query_apstra_product_docs`: semantic search over Apstra product documentation, admin guides, and best practices (enabled when RAG is configured)
 
 
 
@@ -201,6 +209,27 @@ device output before the target peer and device are confirmed.
 ## IBA probe workflow
 
 Call `probes` with `intent='list'` first to discover available probes and their `stage_names`. Then call `probes` with `intent='detail'` or `intent='history'` using the exact `stage` value from that list — do NOT guess stage names.
+
+---
+
+## Product documentation queries
+
+When a user asks "how do I..." or "what is..." about Apstra features, configuration, or best practices, use `query_apstra_product_docs` (if RAG is enabled).
+
+**Use `query_apstra_product_docs` for:**
+- "How do I configure BGP peering?"
+- "What is an IBA probe?"
+- "How does VXLAN work in Apstra?"
+- "What are the best practices for configlets?"
+- "How do I set up a virtual network?"
+
+**Do NOT use `query_apstra_product_docs` for:**
+- Live network state questions → use `get_systems`, `get_blueprints`, `anomaly`, `telemetry`
+- Reference architecture questions → use `get_reference_design_*` tools
+- Device-level diagnostics → use `run_device_commands`, `get_rendered_config`
+- Topology or cabling questions → use `get_link_list`, `get_interface_list`
+
+If RAG is not configured, fall back to `get_reference_design_*` tools for architecture guidance, but note that those are read-only architecture docs, not how-to guides.
 
 ---
 

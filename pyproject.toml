@@ -25,6 +25,7 @@ packages = ["config", "handlers", "primitives", "tools"]
 "server.py" = "server.py"
 "instructions.md" = "instructions.md"
 "_ref_arch" = "_ref_arch"
+"knowledge" = "knowledge"
 
 [build-system]
 requires = ["hatchling"]
