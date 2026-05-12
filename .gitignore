@@ -92,3 +92,5 @@ MANUAL_TEST_SCENARIOS.md
 knowledge/build/source_pdfs/*.pdf
 
 DevDocs*
+
+knowledge/index.embeddings.json
