@@ -29,6 +29,7 @@ network calls — that happens in server.py during the lifespan startup hook.
 
 import logging
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
@@ -39,6 +40,15 @@ from primitives.auth_manager import ApstraSession
 logger = logging.getLogger(__name__)
 
 _DEFAULT_CONFIG_PATH = Path(__file__).parent / "instances.yaml"
+
+
+@dataclass(frozen=True)
+class RagConfig:
+    enabled: bool
+    embedding_provider: str
+    embedding_model: str
+    embedding_url: str
+    top_k: int = 5
 
 
 def _resolve_config_path() -> Path | None:
@@ -144,6 +154,120 @@ def _resolve_credentials(instance: dict) -> tuple[str, str]:
     return username, password
 
 
+def _load_config_data() -> dict:
+    """
+    Loads and returns the YAML config as a dict.
+
+    Returns an empty dict when no config file is available.
+    """
+    config_path = _resolve_config_path()
+    if config_path is None:
+        return {}
+
+    with open(config_path, encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+def get_rag_config() -> RagConfig | None:
+    """
+    Returns the optional RAG configuration when enabled.
+
+    Behavior (priority order):
+      1. If YAML rag block exists and enabled=true -> use YAML values
+      2. If YAML rag block missing/disabled -> check environment variables
+      3. If environment variables present and valid -> use env values
+      4. Otherwise -> return None (RAG disabled)
+
+    Environment variables:
+      - APSTRA_RAG_ENABLED: set to "1", "true", or "yes" to enable
+      - APSTRA_RAG_EMBEDDING_PROVIDER: e.g., "ollama", "lmstudio", "openai_compatible"
+      - APSTRA_RAG_EMBEDDING_MODEL: embedding model name
+      - APSTRA_RAG_EMBEDDING_URL: embedding service URL
+      - APSTRA_RAG_TOP_K: optional, defaults to 5
+    """
+    config = _load_config_data()
+    rag = config.get("rag")
+
+    # Try YAML config first
+    if isinstance(rag, dict) and bool(rag.get("enabled", False)):
+        provider = str(rag.get("embedding_provider") or "").strip()
+        model = str(rag.get("embedding_model") or "").strip()
+        url = str(rag.get("embedding_url") or "").strip()
+
+        missing: list[str] = []
+        if not provider:
+            missing.append("rag.embedding_provider")
+        if not model:
+            missing.append("rag.embedding_model")
+        if not url:
+            missing.append("rag.embedding_url")
+
+        if missing:
+            raise ValueError(
+                "RAG is enabled in YAML but missing required settings: "
+                + ", ".join(missing)
+            )
+
+        top_k_raw = rag.get("top_k", 5)
+        try:
+            top_k = int(top_k_raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("rag.top_k must be an integer") from exc
+
+        if top_k < 1:
+            raise ValueError("rag.top_k must be >= 1")
+
+        logger.info("RAG configuration loaded from instances.yaml.")
+        return RagConfig(
+            enabled=True,
+            embedding_provider=provider,
+            embedding_model=model,
+            embedding_url=url,
+            top_k=top_k,
+        )
+
+    # Fall back to environment variables
+    enabled_raw = os.environ.get("APSTRA_RAG_ENABLED", "").lower()
+    if enabled_raw not in ("1", "true", "yes"):
+        return None
+
+    provider = os.environ.get("APSTRA_RAG_EMBEDDING_PROVIDER", "").strip()
+    model = os.environ.get("APSTRA_RAG_EMBEDDING_MODEL", "").strip()
+    url = os.environ.get("APSTRA_RAG_EMBEDDING_URL", "").strip()
+
+    missing: list[str] = []
+    if not provider:
+        missing.append("APSTRA_RAG_EMBEDDING_PROVIDER")
+    if not model:
+        missing.append("APSTRA_RAG_EMBEDDING_MODEL")
+    if not url:
+        missing.append("APSTRA_RAG_EMBEDDING_URL")
+
+    if missing:
+        raise ValueError(
+            "APSTRA_RAG_ENABLED is set but missing required environment variables: "
+            + ", ".join(missing)
+        )
+
+    top_k_raw = os.environ.get("APSTRA_RAG_TOP_K", "5").strip()
+    try:
+        top_k = int(top_k_raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("APSTRA_RAG_TOP_K must be an integer") from exc
+
+    if top_k < 1:
+        raise ValueError("APSTRA_RAG_TOP_K must be >= 1")
+
+    logger.info("RAG configuration loaded from environment variables.")
+    return RagConfig(
+        enabled=True,
+        embedding_provider=provider,
+        embedding_model=model,
+        embedding_url=url,
+        top_k=top_k,
+    )
+
+
 def load_sessions() -> List[ApstraSession]:
     """
     Builds the session pool using the priority order described in the module docstring.
@@ -160,7 +284,7 @@ def load_sessions() -> List[ApstraSession]:
         logger.info("Session pool built with 1 instance (env vars).")
         return [session]
 
-    with open(config_path) as f:
+    with open(config_path, encoding="utf-8") as f:
         config = yaml.safe_load(f)
 
     raw_instances = (config or {}).get("instances") or []

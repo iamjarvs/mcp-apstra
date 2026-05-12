@@ -23,6 +23,10 @@ Current codebase scope (May 2026): compact-by-default MCP tool surface with umbr
 
 ## What changed recently
 
+- Added optional RAG (Retrieval-Augmented Generation) for product documentation search:
+  - `query_apstra_product_docs` tool for semantic search over Apstra docs using vector embeddings.
+  - Supports Ollama, LM Studio, and OpenAI-compatible embedding providers.
+  - Includes desktop and web UI for building custom knowledge indexes from PDFs.
 - Expanded from a smaller core toolset to 48 tools.
 - Added anomaly timeline and analytics workflows backed by local stores.
 - Added probe tooling: `get_probe_list`, `get_probe_detail`, `get_probe_history`.
@@ -238,6 +242,63 @@ instances:
 | `MCP_ANOMALY_DB_PATH` | `<MCP_DATA_DIR>/anomaly_timeseries.db` | Full path override |
 | `MCP_COUNTER_DB_PATH` | `<MCP_DATA_DIR>/counter_timeseries.db` | Full path override |
 
+### Optional: RAG (product documentation search)
+
+The MCP server optionally supports semantic search over Apstra product documentation via the `query_apstra_product_docs` tool. This uses vector embeddings and requires:
+
+1. **Built knowledge index** — PDFs embedded into a JSON index file
+2. **Embedding provider** — local (Ollama, LM Studio) or remote (OpenAI-compatible API)
+
+**Quick setup** (Ollama + local docs):
+
+```bash
+# 1. Run Ollama locally
+ollama serve
+
+# 2. In another terminal, build the knowledge index
+cd knowledge/build
+python build_index_ui.py
+# → Drag/drop PDFs, set model=qwen3-embedding, output to /path/to/index.embeddings.json
+
+# 3. Configure RAG via environment variables
+APSTRA_RAG_ENABLED="true"
+APSTRA_RAG_EMBEDDING_PROVIDER="ollama"
+APSTRA_RAG_EMBEDDING_MODEL="qwen3-embedding"
+APSTRA_RAG_EMBEDDING_URL="http://localhost:11434/api/embed"
+APSTRA_RAG_TOP_K="5"
+```
+
+**Or via YAML** (`config/instances.yaml`):
+
+```yaml
+instances:
+  - name: apstra-lab
+    host: https://apstra.example.com
+    username: admin
+    password: secretpassword
+
+rag:
+  enabled: true
+  embedding_provider: ollama
+  embedding_model: qwen3-embedding
+  embedding_url: http://localhost:11434/api/embed
+  top_k: 5
+```
+
+**RAG environment variables** (optional, fallback when YAML is absent):
+
+| Variable | Default | Notes |
+|---|---|---|
+| `APSTRA_RAG_ENABLED` | unset | Set to `"true"`, `"1"`, or `"yes"` to enable |
+| `APSTRA_RAG_EMBEDDING_PROVIDER` | unset | `ollama`, `lmstudio`, or `openai_compatible` |
+| `APSTRA_RAG_EMBEDDING_MODEL` | unset | Model name (e.g., `qwen3-embedding`) |
+| `APSTRA_RAG_EMBEDDING_URL` | unset | Embedding service endpoint |
+| `APSTRA_RAG_TOP_K` | `5` | Number of results to return |
+
+When RAG is enabled and properly configured, the `query_apstra_product_docs` tool becomes available for answering "how do I..." and "what is..." questions about Apstra.
+
+**Full RAG setup guide**: See [RAG_CONFIGURATION.md](RAG_CONFIGURATION.md).
+
 ## Running the server
 
 ### stdio (default)
@@ -363,6 +424,12 @@ Compact mode exposes umbrella tools (`anomaly`, `telemetry`, `virtual_networks`,
 | `get_reference_design_context` | Full guide content |
 | `get_junos_command_categories` | Command taxonomy for scoped lookup |
 | `get_junos_show_commands` | JunOS command reference with optional category filters |
+
+### Product documentation
+
+| Tool | Purpose |
+|---|---|
+| `query_apstra_product_docs` | Semantic search over Apstra product docs (admin guides, how-tos, best practices). Optional; requires RAG configuration. |
 
 ### Telemetry and probe workflows
 
@@ -500,6 +567,12 @@ Core dependencies from `pyproject.toml`:
 - `httpx>=0.28.1`
 - `pyyaml>=6.0.3`
 - `kuzu>=0.11.3`
+
+Optional RAG (product documentation) dependencies:
+
+- `pypdf>=5.5.0` (for PDF chunking in knowledge builder)
+- `flask` (for web UI fallback when Tk unavailable)
+- `ollama` or `lmstudio` or compatible embedding provider (local or remote)
 
 Dev dependencies:
 

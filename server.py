@@ -8,7 +8,7 @@ from fastmcp import FastMCP
 from fastmcp.server.middleware.logging import LoggingMiddleware
 from fastmcp.server.middleware.timing import TimingMiddleware
 
-from config.settings import load_sessions
+from config.settings import get_rag_config, load_sessions
 from primitives.anomaly_store import AnomalyStore
 from primitives.counter_store import CounterStore
 from primitives.graph_client import BlueprintGraphRegistry
@@ -182,8 +182,15 @@ def _resolve_tool_surface(value: str | None = None) -> str:
     return _TOOL_SURFACE_COMPACT
 
 
-def _register_tools(app_mcp, tool_surface: str | None = None) -> str:
+def _register_tools(app_mcp, tool_surface: str | None = None, rag_config=None) -> str:
     surface = _resolve_tool_surface(tool_surface)
+
+    if rag_config is None:
+        try:
+            rag_config = get_rag_config()
+        except Exception as exc:
+            logging.warning("RAG configuration invalid; docs retrieval disabled: %s", exc)
+            rag_config = None
 
     # Core and non-clustered tools are always exposed.
     bgp_tool.register(app_mcp)
@@ -215,6 +222,11 @@ def _register_tools(app_mcp, tool_surface: str | None = None) -> str:
         virtual_networks_tool.register(app_mcp)
         telemetry_tool.register(app_mcp)
         probes_tool.register(app_mcp)
+
+    if rag_config and rag_config.enabled:
+        from tools import docs as docs_tool
+
+        docs_tool.register(app_mcp, rag_config)
 
     return surface
 

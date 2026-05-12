@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+from config.settings import RagConfig
+
 import server
 
 
@@ -80,3 +82,24 @@ def test_register_tools_full_exposes_umbrellas_and_granular_tools():
     assert "get_audit_log" in stub.tools
     assert "get_device_audit_config" in stub.tools
     assert len(stub.tools) == 56
+
+
+def test_register_tools_includes_query_apstra_product_docs_when_rag_enabled():
+    stub = StubMCP()
+    rag_cfg = RagConfig(
+        enabled=True,
+        embedding_provider="ollama",
+        embedding_model="nomic-embed-text",
+        embedding_url="http://localhost:11434/api/embeddings",
+        top_k=5,
+    )
+
+    server._register_tools(stub, tool_surface="compact", rag_config=rag_cfg)
+    assert "query_apstra_product_docs" in stub.tools
+
+
+def test_register_tools_skips_query_apstra_product_docs_when_rag_disabled():
+    stub = StubMCP()
+
+    server._register_tools(stub, tool_surface="compact", rag_config=None)
+    assert "query_apstra_product_docs" not in stub.tools

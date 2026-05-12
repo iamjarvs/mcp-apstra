@@ -28,3 +28,40 @@ instances:
   #   username: admin
   #   password: changeme
   #   ssl_verify: false
+
+# Optional documentation RAG configuration.
+# You can configure RAG in two ways:
+#
+# METHOD 1: YAML config (recommended)
+# Uncomment and fill in the rag block below. This takes precedence over
+# environment variables if both are present.
+#
+# rag:
+#   enabled: true
+#   embedding_provider: ollama              # ollama, lmstudio, openai_compatible
+#   embedding_model: qwen3-embedding        # model name for embeddings
+#   embedding_url: http://localhost:11434/api/embed  # embedding service endpoint
+#   top_k: 5                                 # number of results to return
+#
+#
+# METHOD 2: Environment variables (alternative)
+# If no YAML rag block is present or it's disabled, the following environment
+# variables will be checked (all required if APSTRA_RAG_ENABLED is set):
+#
+#   APSTRA_RAG_ENABLED: set to "1", "true", or "yes" to enable
+#   APSTRA_RAG_EMBEDDING_PROVIDER: e.g., "ollama"
+#   APSTRA_RAG_EMBEDDING_MODEL: e.g., "qwen3-embedding"
+#   APSTRA_RAG_EMBEDDING_URL: e.g., "http://localhost:11434/api/embed"
+#   APSTRA_RAG_TOP_K: optional, defaults to 5 if not set
+#
+# Example (in Claude Desktop config or shell):
+#   "env": {
+#     "APSTRA_RAG_ENABLED": "true",
+#     "APSTRA_RAG_EMBEDDING_PROVIDER": "ollama",
+#     "APSTRA_RAG_EMBEDDING_MODEL": "qwen3-embedding",
+#     "APSTRA_RAG_EMBEDDING_URL": "http://localhost:11434/api/embed",
+#     "APSTRA_RAG_TOP_K": "5"
+#   }
+#
+# Omit the entire rag block or set APSTRA_RAG_ENABLED to a falsy value
+# to keep docs retrieval disabled.
