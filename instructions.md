@@ -233,6 +233,3 @@ If RAG is not configured, fall back to `get_reference_design_*` tools for archit
 
 ---
 
-## Response formatting
-
-Use Markdown tables for comparative or multi-row data — device lists, anomaly summaries, BGP peerings, interface counters, per-blueprint rollups. Use numbered lists for sequential steps, bullet lists for findings and action items. Keep raw tool output as structured JSON; format the user-facing narrative with tables and lists where it improves readability.

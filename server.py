@@ -40,6 +40,60 @@ from tools import triage_dispatch as triage_dispatch_tool
 from tools import audit as audit_tool
 
 
+FORMAT_HINT = (
+    "\n\nFormatting rules for your response:\n"
+    "- Use Markdown tables for multi-row or comparative data: device lists, "
+    "anomaly summaries, BGP peering state, interface counters, per-blueprint rollups, "
+    "configlet drift, and any result with three or more items sharing the same fields.\n"
+    "- Use bullet points for findings, observations, and action items.\n"
+    "- Use numbered lists for sequential steps and remediation procedures.\n"
+    "- Always lead with the most critical finding -- highest severity first.\n"
+    "- Summarise what the data means in plain English before or after any table. "
+    "Do not let a table stand alone without a sentence of context.\n"
+    "- Never return raw JSON to the user. Extract the relevant fields and present them "
+    "in a table or structured narrative instead.\n"
+    "- Keep technical terms but explain their significance inline -- for example, "
+    "do not just report a BGP session as 'idle', explain what that state means for traffic.\n"
+    "- Use a horizontal rule (---) to separate distinct sections when a response "
+    "covers more than one topic or blueprint."
+)
+
+
+def _decorate_tools_with_format_hint(app_mcp):
+    """
+    Patches app_mcp.tool during registration so every tool description contains
+    the global response-formatting guidance.
+    """
+    original_tool = app_mcp.tool
+
+    def tool_with_format_hint(*decorator_args, **decorator_kwargs):
+        explicit_description = decorator_kwargs.get("description")
+
+        def apply(fn):
+            base_description = explicit_description
+            if not base_description:
+                base_description = (fn.__doc__ or "").strip()
+
+            if base_description and FORMAT_HINT not in base_description:
+                merged_description = f"{base_description}{FORMAT_HINT}"
+            elif base_description:
+                merged_description = base_description
+            else:
+                merged_description = FORMAT_HINT.strip()
+
+            kwargs = dict(decorator_kwargs)
+            kwargs["description"] = merged_description
+            try:
+                return original_tool(*decorator_args, **kwargs)(fn)
+            except TypeError:
+                # Lightweight stubs in unit tests may not accept decorator kwargs.
+                return original_tool(*decorator_args, **decorator_kwargs)(fn)
+
+        return apply
+
+    return original_tool, tool_with_format_hint
+
+
 def _env_enabled(name: str, default: str = "0") -> bool:
     value = os.environ.get(name, default)
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
@@ -184,6 +238,8 @@ def _resolve_tool_surface(value: str | None = None) -> str:
 
 def _register_tools(app_mcp, tool_surface: str | None = None, rag_config=None) -> str:
     surface = _resolve_tool_surface(tool_surface)
+    original_tool, patched_tool = _decorate_tools_with_format_hint(app_mcp)
+    app_mcp.tool = patched_tool
 
     if rag_config is None:
         try:
@@ -192,41 +248,44 @@ def _register_tools(app_mcp, tool_surface: str | None = None, rag_config=None) -
             logging.warning("RAG configuration invalid; docs retrieval disabled: %s", exc)
             rag_config = None
 
-    # Core and non-clustered tools are always exposed.
-    bgp_tool.register(app_mcp)
-    blueprints_tool.register(app_mcp)
-    config_rendering_tool.register(app_mcp)
-    design_tool.register(app_mcp)
-    interfaces_tool.register(app_mcp)
-    links_tool.register(app_mcp)
-    mtu_check_tool.register(app_mcp)
-    reference_tool.register(app_mcp)
-    routing_policy_tool.register(app_mcp)
-    run_commands_tool.register(app_mcp)
-    system_health_tool.register(app_mcp)
-    systems_tool.register(app_mcp)
+    try:
+        # Core and non-clustered tools are always exposed.
+        bgp_tool.register(app_mcp)
+        blueprints_tool.register(app_mcp)
+        config_rendering_tool.register(app_mcp)
+        design_tool.register(app_mcp)
+        interfaces_tool.register(app_mcp)
+        links_tool.register(app_mcp)
+        mtu_check_tool.register(app_mcp)
+        reference_tool.register(app_mcp)
+        routing_policy_tool.register(app_mcp)
+        run_commands_tool.register(app_mcp)
+        system_health_tool.register(app_mcp)
+        systems_tool.register(app_mcp)
 
-    # Umbrella tools provide a bounded compact surface.
-    anomaly_umbrella_tool.register(app_mcp)
-    telemetry_dispatch_tool.register(app_mcp)
-    virtual_networks_dispatch_tool.register(app_mcp)
-    probes_dispatch_tool.register(app_mcp)
-    triage_dispatch_tool.register(app_mcp)
-    audit_tool.register(app_mcp, include_legacy=(surface == _TOOL_SURFACE_FULL))
+        # Umbrella tools provide a bounded compact surface.
+        anomaly_umbrella_tool.register(app_mcp)
+        telemetry_dispatch_tool.register(app_mcp)
+        virtual_networks_dispatch_tool.register(app_mcp)
+        probes_dispatch_tool.register(app_mcp)
+        triage_dispatch_tool.register(app_mcp)
+        audit_tool.register(app_mcp, include_legacy=(surface == _TOOL_SURFACE_FULL))
 
-    # Full surface keeps all existing granular tools for backwards compatibility.
-    if surface == _TOOL_SURFACE_FULL:
-        anomaly_timeline_tool.register(app_mcp)
-        anomalies_tool.register(app_mcp)
-        anomaly_analytics_tool.register(app_mcp)
-        virtual_networks_tool.register(app_mcp)
-        telemetry_tool.register(app_mcp)
-        probes_tool.register(app_mcp)
+        # Full surface keeps all existing granular tools for backwards compatibility.
+        if surface == _TOOL_SURFACE_FULL:
+            anomaly_timeline_tool.register(app_mcp)
+            anomalies_tool.register(app_mcp)
+            anomaly_analytics_tool.register(app_mcp)
+            virtual_networks_tool.register(app_mcp)
+            telemetry_tool.register(app_mcp)
+            probes_tool.register(app_mcp)
 
-    if rag_config and rag_config.enabled:
-        from tools import docs as docs_tool
+        if rag_config and rag_config.enabled:
+            from tools import docs as docs_tool
 
-        docs_tool.register(app_mcp, rag_config)
+            docs_tool.register(app_mcp, rag_config)
+    finally:
+        app_mcp.tool = original_tool
 
     return surface
 
