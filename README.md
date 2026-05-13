@@ -43,6 +43,8 @@ Current codebase scope (May 2026): compact-by-default MCP tool surface with umbr
 - Added compact umbrella dispatchers:
   - `anomaly`, `telemetry`, `virtual_networks`, `probes`
   - Use `MCP_TOOL_SURFACE=full` for legacy per-function tool exposure.
+- Added chart rendering tool:
+  - `generate_chart` renders line/bar/stacked_bar/heatmap/scatter charts and returns PNG images for visual trend analysis.
 
 ## Quick install
 
@@ -419,6 +421,7 @@ Compact mode exposes umbrella tools (`anomaly`, `telemetry`, `virtual_networks`,
 | `run_device_commands` | Run JunOS show commands via Apstra fetchcmd |
 | `get_rendered_config` | Rendered config by sections/subsections |
 | `routing_policy` | Discover-first routing-policy dispatcher for peer health, policy explanation, hidden routes, RIB comparison, and next-hop resolution |
+| `generate_chart` | Render chart PNGs (line/bar/stacked/heatmap/scatter) from structured series data |
 | `get_reference_design_overview` | Compact index of reference sections |
 | `get_reference_design_section` | Fetch one guide section |
 | `get_reference_design_context` | Full guide content |
