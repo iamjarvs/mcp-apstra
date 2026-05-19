@@ -40,7 +40,8 @@ Compact umbrella intent mapping:
 - `probes`: `list`, `detail`, `history`
 - `triage`: `baseline`, `commit_blockers`, `drift`, `active_anomalies`, `incident_snapshot`
 - `audit`: `events`, `device_config`
-- `generate_chart`: line, bar, stacked_bar, heatmap, or scatter PNG output from structured series data
+- `generate_chart`: line, bar, stacked_bar, heatmap, or scatter PNG output from structured series data. If chart URL publishing env vars are enabled, tool also returns a public URL and markdown snippet for inline chat rendering (providers: catbox, postimages, freeimage).
+   - For local testing with certificate-chain issues during upload, `APSTRA_CHART_PUBLISH_INSECURE_SKIP_VERIFY=true` can be used temporarily.
 - `query_apstra_product_docs`: semantic search over Apstra product documentation, admin guides, and best practices (enabled when RAG is configured)
 
 

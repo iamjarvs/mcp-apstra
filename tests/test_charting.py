@@ -1,4 +1,5 @@
 import struct
+from unittest.mock import patch
 
 from fastmcp.utilities.types import Image
 
@@ -216,3 +217,163 @@ def test_generate_chart_rejects_annotation_outside_categorical_axis():
     )
 
     assert result["error"] == "invalid_annotations"
+
+
+def test_generate_chart_publish_enabled_returns_image_and_markdown(monkeypatch):
+    tool = _build_tools()["generate_chart"]
+
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_ENABLED", "true")
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_PROVIDER", "catbox")
+
+    with patch("tools.charting.httpx.post") as mock_post:
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.text = "https://files.catbox.moe/abc123.png"
+
+        result = tool(
+            chart_type="line",
+            title="BGP Flaps",
+            x_label="Time",
+            y_label="Flaps",
+            series=_base_line_series(),
+        )
+
+    assert isinstance(result, list)
+    assert isinstance(result[0], Image)
+    assert isinstance(result[1], dict)
+    assert result[1]["chart_url"] == "https://files.catbox.moe/abc123.png"
+    assert result[1]["provider"] == "catbox"
+    assert "![BGP Flaps](https://files.catbox.moe/abc123.png)" in result[1]["markdown"]
+
+
+def test_generate_chart_publish_override_false_ignores_env(monkeypatch):
+    tool = _build_tools()["generate_chart"]
+
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_ENABLED", "true")
+
+    result = tool(
+        chart_type="line",
+        title="BGP Flaps",
+        x_label="Time",
+        y_label="Flaps",
+        series=_base_line_series(),
+        publish_public_url=False,
+    )
+
+    assert isinstance(result, Image)
+
+
+def test_generate_chart_publish_provider_error(monkeypatch):
+    tool = _build_tools()["generate_chart"]
+
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_ENABLED", "true")
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_PROVIDER", "unknown-provider")
+
+    result = tool(
+        chart_type="line",
+        title="BGP Flaps",
+        x_label="Time",
+        y_label="Flaps",
+        series=_base_line_series(),
+    )
+
+    assert isinstance(result, list)
+    assert isinstance(result[0], Image)
+    assert "chart_publish_error" in result[1]
+    assert "unsupported APSTRA_CHART_PUBLISH_PROVIDER" in result[1]["chart_publish_error"]
+
+
+def test_generate_chart_publish_provider_error_strict_mode(monkeypatch):
+    tool = _build_tools()["generate_chart"]
+
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_ENABLED", "true")
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_PROVIDER", "unknown-provider")
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_STRICT", "true")
+
+    result = tool(
+        chart_type="line",
+        title="BGP Flaps",
+        x_label="Time",
+        y_label="Flaps",
+        series=_base_line_series(),
+    )
+
+    assert result["error"] == "chart_publish_failed"
+    assert "unsupported APSTRA_CHART_PUBLISH_PROVIDER" in result["detail"]
+
+
+def test_generate_chart_publish_freeimage_success(monkeypatch):
+    tool = _build_tools()["generate_chart"]
+
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_ENABLED", "true")
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_PROVIDER", "freeimage")
+    monkeypatch.setenv("APSTRA_CHART_FREEIMAGE_API_KEY", "test-key")
+
+    with patch("tools.charting.httpx.post") as mock_post:
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {
+            "status_code": 200,
+            "image": {
+                "url": "https://freeimage.host/i/example.png",
+                "display_url": "https://freeimage.host/i/example.md.png",
+            },
+        }
+
+        result = tool(
+            chart_type="line",
+            title="BGP Flaps",
+            x_label="Time",
+            y_label="Flaps",
+            series=_base_line_series(),
+        )
+
+    assert isinstance(result, list)
+    assert isinstance(result[0], Image)
+    assert result[1]["provider"] == "freeimage"
+    assert result[1]["chart_url"] == "https://freeimage.host/i/example.png"
+
+
+def test_generate_chart_publish_freeimage_insecure_skip_verify(monkeypatch):
+    tool = _build_tools()["generate_chart"]
+
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_ENABLED", "true")
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_PROVIDER", "freeimage")
+    monkeypatch.setenv("APSTRA_CHART_FREEIMAGE_API_KEY", "test-key")
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_INSECURE_SKIP_VERIFY", "true")
+
+    with patch("tools.charting.httpx.post") as mock_post:
+        mock_post.return_value.status_code = 200
+        mock_post.return_value.json.return_value = {
+            "status_code": 200,
+            "image": {"url": "https://freeimage.host/i/example.png"},
+        }
+
+        tool(
+            chart_type="line",
+            title="BGP Flaps",
+            x_label="Time",
+            y_label="Flaps",
+            series=_base_line_series(),
+        )
+
+    kwargs = mock_post.call_args.kwargs
+    assert kwargs.get("verify") is False
+
+
+def test_generate_chart_publish_freeimage_missing_key(monkeypatch):
+    tool = _build_tools()["generate_chart"]
+
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_ENABLED", "true")
+    monkeypatch.setenv("APSTRA_CHART_PUBLISH_PROVIDER", "freeimage")
+    monkeypatch.delenv("APSTRA_CHART_FREEIMAGE_API_KEY", raising=False)
+
+    result = tool(
+        chart_type="line",
+        title="BGP Flaps",
+        x_label="Time",
+        y_label="Flaps",
+        series=_base_line_series(),
+    )
+
+    assert isinstance(result, list)
+    assert isinstance(result[0], Image)
+    assert "freeimage upload requested but APSTRA_CHART_FREEIMAGE_API_KEY is not set" in result[1]["chart_publish_error"]

@@ -243,6 +243,58 @@ instances:
 | `MCP_DATA_DIR` | package-local `data/` | Base path for local SQLite stores |
 | `MCP_ANOMALY_DB_PATH` | `<MCP_DATA_DIR>/anomaly_timeseries.db` | Full path override |
 | `MCP_COUNTER_DB_PATH` | `<MCP_DATA_DIR>/counter_timeseries.db` | Full path override |
+| `APSTRA_CHART_PUBLISH_ENABLED` | `false` | Enable optional chart URL publishing for `generate_chart` |
+| `APSTRA_CHART_PUBLISH_PROVIDER` | `catbox` | `catbox`, `postimages`, or `freeimage` |
+| `APSTRA_CHART_PUBLISH_TIMEOUT_SECONDS` | `20` | HTTP timeout for upload requests |
+| `APSTRA_CHART_PUBLISH_STRICT` | `false` | If `true`, upload failures return tool error instead of falling back to image-only |
+| `APSTRA_CHART_PUBLISH_INSECURE_SKIP_VERIFY` | `false` | If `true`, disables TLS certificate verification for chart upload HTTP calls (testing only) |
+| `APSTRA_CHART_CATBOX_USERHASH` | unset | Optional Catbox user hash for account-linked uploads |
+| `APSTRA_CHART_POSTIMAGES_API_URL` | unset | Required when provider is `postimages`; upload endpoint URL |
+| `APSTRA_CHART_POSTIMAGES_API_KEY` | unset | Optional API key for `postimages` endpoint |
+| `APSTRA_CHART_FREEIMAGE_API_URL` | `https://freeimage.host/api/1/upload` | Freeimage upload endpoint override |
+| `APSTRA_CHART_FREEIMAGE_API_KEY` | unset | Required when provider is `freeimage` |
+
+### Optional: Chart URL publishing for inline markdown
+
+`generate_chart` always returns MCP image content. Some clients (including Claude desktop)
+show that image only in expanded tool output.
+
+For quick testing, you can optionally publish chart PNGs to a temporary host and get
+a markdown-ready URL in tool output.
+
+Catbox example:
+
+```bash
+APSTRA_CHART_PUBLISH_ENABLED=true
+APSTRA_CHART_PUBLISH_PROVIDER=catbox
+```
+
+Postimages example (endpoint varies by account/workflow):
+
+```bash
+APSTRA_CHART_PUBLISH_ENABLED=true
+APSTRA_CHART_PUBLISH_PROVIDER=postimages
+APSTRA_CHART_POSTIMAGES_API_URL=https://<your-postimages-upload-endpoint>
+APSTRA_CHART_POSTIMAGES_API_KEY=<optional-key>
+```
+
+Freeimage example:
+
+```bash
+APSTRA_CHART_PUBLISH_ENABLED=true
+APSTRA_CHART_PUBLISH_PROVIDER=freeimage
+APSTRA_CHART_FREEIMAGE_API_KEY=<your-freeimage-api-key>
+```
+
+When publishing is enabled and upload succeeds, `generate_chart` returns both:
+1. MCP image content (for tool viewers)
+2. `chart_url` and markdown string (`![title](url)`) for inline chat rendering
+
+If upload fails and `APSTRA_CHART_PUBLISH_STRICT` is not set, the tool falls back
+to image-only output and includes `chart_publish_error` metadata instead of failing.
+
+If you see certificate validation failures in local environments, you can temporarily set
+`APSTRA_CHART_PUBLISH_INSECURE_SKIP_VERIFY=true` for testing. Do not use this in production.
 
 ### Optional: RAG (product documentation search)
 

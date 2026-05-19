@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from io import BytesIO
 from math import isfinite
+import os
 from typing import Annotated, Literal
 
+import httpx
 import matplotlib
 matplotlib.use("Agg")
 from matplotlib import dates as mdates
@@ -55,6 +57,199 @@ class _NormalizedSeries:
     color: str
     x_values: list[datetime | float | str]
     y_values: list[float]
+
+
+@dataclass(frozen=True)
+class _ChartPublishConfig:
+    enabled: bool
+    provider: str
+    timeout_seconds: float
+    strict: bool
+    ssl_verify: bool
+    catbox_userhash: str | None = None
+    postimages_api_url: str | None = None
+    postimages_api_key: str | None = None
+    freeimage_api_url: str | None = None
+    freeimage_api_key: str | None = None
+
+
+def _is_truthy(value: str | None) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _get_publish_config() -> _ChartPublishConfig:
+    enabled = _is_truthy(os.environ.get("APSTRA_CHART_PUBLISH_ENABLED", "0"))
+    provider = str(os.environ.get("APSTRA_CHART_PUBLISH_PROVIDER", "catbox")).strip().lower() or "catbox"
+
+    timeout_raw = str(os.environ.get("APSTRA_CHART_PUBLISH_TIMEOUT_SECONDS", "20")).strip()
+    try:
+        timeout_seconds = float(timeout_raw)
+    except ValueError:
+        timeout_seconds = 20.0
+
+    if timeout_seconds <= 0:
+        timeout_seconds = 20.0
+
+    return _ChartPublishConfig(
+        enabled=enabled,
+        provider=provider,
+        timeout_seconds=timeout_seconds,
+        strict=_is_truthy(os.environ.get("APSTRA_CHART_PUBLISH_STRICT", "0")),
+        ssl_verify=not _is_truthy(os.environ.get("APSTRA_CHART_PUBLISH_INSECURE_SKIP_VERIFY", "0")),
+        catbox_userhash=(os.environ.get("APSTRA_CHART_CATBOX_USERHASH") or None),
+        postimages_api_url=(os.environ.get("APSTRA_CHART_POSTIMAGES_API_URL") or None),
+        postimages_api_key=(os.environ.get("APSTRA_CHART_POSTIMAGES_API_KEY") or None),
+        freeimage_api_url=(
+            os.environ.get("APSTRA_CHART_FREEIMAGE_API_URL")
+            or "https://freeimage.host/api/1/upload"
+        ),
+        freeimage_api_key=(os.environ.get("APSTRA_CHART_FREEIMAGE_API_KEY") or None),
+    )
+
+
+def _upload_to_catbox(png_bytes: bytes, config: _ChartPublishConfig) -> tuple[str | None, str | None]:
+    data = {"reqtype": "fileupload"}
+    if config.catbox_userhash:
+        data["userhash"] = config.catbox_userhash
+
+    try:
+        response = httpx.post(
+            "https://catbox.moe/user/api.php",
+            data=data,
+            files={"fileToUpload": ("chart.png", png_bytes, "image/png")},
+            timeout=config.timeout_seconds,
+            verify=config.ssl_verify,
+        )
+    except Exception as exc:
+        return None, f"catbox upload failed: {exc}"
+
+    if response.status_code >= 400:
+        return None, f"catbox upload failed with status {response.status_code}"
+
+    url = response.text.strip()
+    if not url.startswith("http"):
+        return None, "catbox upload response did not include a URL"
+    return url, None
+
+
+def _extract_url_from_json(payload: dict) -> str | None:
+    candidates = (
+        payload.get("url"),
+        payload.get("link"),
+        payload.get("direct_url"),
+        payload.get("image_url"),
+    )
+    for item in candidates:
+        if isinstance(item, str) and item.startswith("http"):
+            return item
+
+    data_node = payload.get("data")
+    if isinstance(data_node, dict):
+        nested = (
+            data_node.get("url"),
+            data_node.get("link"),
+            data_node.get("display_url"),
+            data_node.get("image"),
+        )
+        for item in nested:
+            if isinstance(item, str) and item.startswith("http"):
+                return item
+    return None
+
+
+def _upload_to_postimages(png_bytes: bytes, config: _ChartPublishConfig) -> tuple[str | None, str | None]:
+    if not config.postimages_api_url:
+        return None, (
+            "postimages upload requested but APSTRA_CHART_POSTIMAGES_API_URL is not set"
+        )
+
+    data = {}
+    if config.postimages_api_key:
+        data["key"] = config.postimages_api_key
+
+    try:
+        response = httpx.post(
+            config.postimages_api_url,
+            data=data,
+            files={"file": ("chart.png", png_bytes, "image/png")},
+            timeout=config.timeout_seconds,
+            verify=config.ssl_verify,
+        )
+    except Exception as exc:
+        return None, f"postimages upload failed: {exc}"
+
+    if response.status_code >= 400:
+        return None, f"postimages upload failed with status {response.status_code}"
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return None, "postimages upload response was not JSON"
+
+    url = _extract_url_from_json(payload)
+    if not url:
+        return None, "postimages upload response did not include a URL"
+    return url, None
+
+
+def _upload_to_freeimage(png_bytes: bytes, config: _ChartPublishConfig) -> tuple[str | None, str | None]:
+    if not config.freeimage_api_key:
+        return None, (
+            "freeimage upload requested but APSTRA_CHART_FREEIMAGE_API_KEY is not set"
+        )
+
+    api_url = config.freeimage_api_url or "https://freeimage.host/api/1/upload"
+    data = {
+        "key": config.freeimage_api_key,
+        "action": "upload",
+        "format": "json",
+    }
+
+    try:
+        response = httpx.post(
+            api_url,
+            data=data,
+            files={"source": ("chart.png", png_bytes, "image/png")},
+            timeout=config.timeout_seconds,
+            verify=config.ssl_verify,
+        )
+    except Exception as exc:
+        return None, f"freeimage upload failed: {exc}"
+
+    if response.status_code >= 400:
+        return None, f"freeimage upload failed with status {response.status_code}"
+
+    try:
+        payload = response.json()
+    except ValueError:
+        return None, "freeimage upload response was not JSON"
+
+    image_node = payload.get("image")
+    if isinstance(image_node, dict):
+        direct_url = image_node.get("url")
+        display_url = image_node.get("display_url")
+        if isinstance(direct_url, str) and direct_url.startswith("http"):
+            return direct_url, None
+        if isinstance(display_url, str) and display_url.startswith("http"):
+            return display_url, None
+
+    url = _extract_url_from_json(payload)
+    if not url:
+        return None, "freeimage upload response did not include a URL"
+    return url, None
+
+
+def _upload_chart(png_bytes: bytes, config: _ChartPublishConfig) -> tuple[str | None, str | None]:
+    if config.provider == "catbox":
+        return _upload_to_catbox(png_bytes, config)
+    if config.provider == "postimages":
+        return _upload_to_postimages(png_bytes, config)
+    if config.provider == "freeimage":
+        return _upload_to_freeimage(png_bytes, config)
+    return None, (
+        f"unsupported APSTRA_CHART_PUBLISH_PROVIDER '{config.provider}'; "
+        "supported values are 'catbox', 'postimages', and 'freeimage'"
+    )
 
 
 def _parse_iso_datetime(raw: str) -> datetime:
@@ -359,8 +554,18 @@ def register(mcp):
             float | None,
             Field(default=None, description="Optional fixed y-axis maximum."),
         ] = None,
+        publish_public_url: Annotated[
+            bool | None,
+            Field(
+                default=None,
+                description=(
+                    "Optional override for chart URL publishing. If omitted, uses environment config. "
+                    "When enabled and upload succeeds, tool returns both MCP image content and markdown URL text."
+                ),
+            ),
+        ] = None,
         ctx: Context = None,
-    ) -> Image | dict:
+    ) -> Image | dict | list[object]:
         """
         Generate a chart image from structured data and return it as a PNG.
 
@@ -477,6 +682,45 @@ def register(mcp):
 
             fig.tight_layout(pad=1.2)
             png_bytes = _to_png(fig)
-            return Image(data=png_bytes, format="png")
+
+            publish_cfg = _get_publish_config()
+            publish_enabled = publish_cfg.enabled if publish_public_url is None else publish_public_url
+            if not publish_enabled:
+                return Image(data=png_bytes, format="png")
+
+            url, publish_error = _upload_chart(png_bytes, publish_cfg)
+            if publish_error:
+                if publish_cfg.strict:
+                    return {
+                        "error": "chart_publish_failed",
+                        "detail": publish_error,
+                        "hint": (
+                            "Set APSTRA_CHART_PUBLISH_ENABLED=0 to disable publishing, "
+                            "fix provider configuration, or unset APSTRA_CHART_PUBLISH_STRICT."
+                        ),
+                    }
+                return [
+                    Image(data=png_bytes, format="png"),
+                    {
+                        "chart_publish_error": publish_error,
+                        "provider": publish_cfg.provider,
+                        "hint": (
+                            "Upload failed; returning chart image only. "
+                            "Set APSTRA_CHART_PUBLISH_STRICT=true to treat upload errors as hard failures."
+                        ),
+                    },
+                ]
+
+            assert url is not None
+            markdown = f"![{title}]({url})"
+            return [
+                Image(data=png_bytes, format="png"),
+                {
+                    "chart_url": url,
+                    "provider": publish_cfg.provider,
+                    "markdown": markdown,
+                    "hint": "Copy markdown into the assistant response to render inline in clients that support external image URLs.",
+                },
+            ]
         finally:
             plt.close(fig)
