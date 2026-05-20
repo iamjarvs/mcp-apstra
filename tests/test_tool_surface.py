@@ -53,6 +53,7 @@ def test_register_tools_compact_exposes_umbrellas_and_hides_granular_clusters():
     assert "get_probe_list" not in stub.tools
 
     # Core standalone tools remain.
+    assert "get_active_system_agent_jobs" in stub.tools
     assert "get_system_liveness" in stub.tools
     assert "get_blueprints" in stub.tools
     assert "routing_policy" in stub.tools
@@ -61,7 +62,7 @@ def test_register_tools_compact_exposes_umbrellas_and_hides_granular_clusters():
     assert "audit" in stub.tools
     assert "get_audit_log" not in stub.tools
     assert "get_device_audit_config" not in stub.tools
-    assert len(stub.tools) == 31
+    assert len(stub.tools) == 32
 
 
 def test_register_tools_full_exposes_umbrellas_and_granular_tools():
@@ -81,7 +82,7 @@ def test_register_tools_full_exposes_umbrellas_and_granular_tools():
     assert "audit" in stub.tools
     assert "get_audit_log" in stub.tools
     assert "get_device_audit_config" in stub.tools
-    assert len(stub.tools) == 56
+    assert len(stub.tools) == 57
 
 
 def test_register_tools_includes_query_apstra_product_docs_when_rag_enabled():

@@ -390,6 +390,7 @@ Compact mode exposes umbrella tools (`anomaly`, `telemetry`, `virtual_networks`,
 
 | Tool | Purpose |
 |---|---|
+| `get_active_system_agent_jobs` | Detect in-flight device jobs before deeper troubleshooting |
 | `get_system_liveness` | Detect unreachable systems before deeper troubleshooting |
 | `get_config_deviations` | Diff intended vs actual system config |
 | `get_current_anomalies` | Current active anomalies |
