@@ -8,12 +8,15 @@ Current codebase scope (May 2026): compact-by-default MCP tool surface with umbr
 
 ## Table of contents
 
+- [5-minute quickstart](#5-minute-quickstart)
+- [Automated setup CLI](#automated-setup-cli)
 - [What changed recently](#what-changed-recently)
 - [Quick install](#quick-install)
 - [Local development quick start](#local-development-quick-start)
 - [Configuration](#configuration)
 - [Running the server](#running-the-server)
 - [Recommended troubleshooting flow](#recommended-troubleshooting-flow)
+- [Security](#security)
 - [Tool catalog (full surface)](#tool-catalog-full-surface)
 - [Architecture](#architecture)
 - [Data sources and freshness](#data-sources-and-freshness)
@@ -43,6 +46,87 @@ Current codebase scope (May 2026): compact-by-default MCP tool surface with umbr
 - Added compact umbrella dispatchers:
   - `anomaly`, `telemetry`, `virtual_networks`, `probes`
   - Use `MCP_TOOL_SURFACE=full` for legacy per-function tool exposure.
+
+## 5-minute quickstart
+
+If you just want to get up and running quickly, follow this path.
+For the complete guide, see [QUICKSTART.md](QUICKSTART.md).
+
+```bash
+git clone <your-repo-url>
+cd v2_apstra-mcp-server-v2
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+apstra-mcp-setup --host https://apstra.example.com --username admin
+
+python auth_test.py
+python server.py
+```
+
+The setup command prompts for password securely and writes:
+
+- `config/instances.yaml`
+- `.vscode/mcp.json`
+
+Optional one-shot RAG + embedding build:
+
+```bash
+pip install -r knowledge/build/requirements.txt
+apstra-mcp-setup \
+  --host https://apstra.example.com \
+  --username admin \
+  --enable-rag \
+  --build-embeddings
+```
+
+Optional (run as an MCP server without entering a venv):
+
+```bash
+uvx --from /absolute/path/to/v2_apstra-mcp-server-v2 apstra-mcp
+```
+
+Security notes for quickstart:
+
+- Never commit `config/instances.yaml`.
+- Use strong credentials or per-instance environment variable overrides.
+- Keep `MCP_VERBOSE=0` unless actively troubleshooting.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and hardening guidance.
+
+## Automated setup CLI
+
+Use `apstra-mcp-setup` to auto-configure local files and MCP config.
+
+Basic usage (interactive password prompt):
+
+```bash
+apstra-mcp-setup --host https://apstra.example.com --username admin
+```
+
+Also update Claude Desktop config automatically:
+
+```bash
+apstra-mcp-setup \
+  --host https://apstra.example.com \
+  --username admin \
+  --configure-claude
+```
+
+Common flags:
+
+- `--overwrite`: replace existing `config/instances.yaml`
+- `--overwrite-mcp-server`: replace existing `apstra` MCP entry
+- `--server-name`: set MCP server key (default: `apstra`)
+- `--skip-vscode`: only write instance config (skip `.vscode/mcp.json`)
+- `--non-interactive --password <value>`: CI/automation mode
+- `--enable-rag`: write the optional `rag` block in `config/instances.yaml`
+- `--build-embeddings`: build `knowledge/index.embeddings.json` from PDFs
+- `--rag-source-dir`: defaults to `knowledge/build/source_pdfs`
 
 ## Quick install
 
@@ -195,6 +279,7 @@ python server.py
 ```
 
 For stdio MCP clients, `fastmcp run server.py` also works.
+If you want the shortest path, use the `5-minute quickstart` section above.
 
 ## Configuration
 
@@ -527,6 +612,7 @@ Run focused suites:
 ```text
 .
 |- server.py
+|- setup_cli.py
 |- instructions.md
 |- pyproject.toml
 |- config/
@@ -582,4 +668,7 @@ Dev dependencies:
 
 ## License
 
-MIT
+This project is source-available under the license in [LICENSE](LICENSE).
+
+Commercial product use is not permitted without prior written permission from
+the copyright holder.
