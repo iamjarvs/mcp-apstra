@@ -38,6 +38,7 @@ from tools import virtual_networks_dispatch as virtual_networks_dispatch_tool
 from tools import probes_dispatch as probes_dispatch_tool
 from tools import triage_dispatch as triage_dispatch_tool
 from tools import audit as audit_tool
+from tools import charting as charting_tool
 
 
 def _env_enabled(name: str, default: str = "0") -> bool:
@@ -205,6 +206,7 @@ def _register_tools(app_mcp, tool_surface: str | None = None, rag_config=None) -
     run_commands_tool.register(app_mcp)
     system_health_tool.register(app_mcp)
     systems_tool.register(app_mcp)
+    charting_tool.register(app_mcp)
 
     # Umbrella tools provide a bounded compact surface.
     anomaly_umbrella_tool.register(app_mcp)

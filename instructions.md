@@ -28,6 +28,7 @@ Use it to answer "how do I configure X" or "what is Y" questions. Enable it by c
 | Design / configlets | `get_blueprint_configlets`, `get_blueprint_property_sets`, `get_design_configlets`, `get_design_property_sets`, `get_blueprint_configlet_drift`, `get_blueprint_property_set_drift` |
 | MTU | `get_fabric_mtu_check` |
 | Routing policy diagnostics | `routing_policy` |
+| Visualization | `generate_chart` |
 | Reference | `get_reference_design_overview`, `get_reference_design_section`, `get_reference_design_context` |
 | Documentation / Knowledge | `query_apstra_product_docs` |
 
@@ -39,6 +40,8 @@ Compact umbrella intent mapping:
 - `probes`: `list`, `detail`, `history`
 - `triage`: `baseline` (includes active jobs), `active_jobs`, `commit_blockers`, `drift`, `active_anomalies`, `incident_snapshot`
 - `audit`: `events`, `device_config`
+- `generate_chart`: line, bar, stacked_bar, heatmap, or scatter PNG output from structured series data. If chart URL publishing env vars are enabled, tool also returns a public URL and markdown snippet for inline chat rendering (providers: catbox, postimages, freeimage).
+   - For local testing with certificate-chain issues during upload, `APSTRA_CHART_PUBLISH_INSECURE_SKIP_VERIFY=true` can be used temporarily.
 - `query_apstra_product_docs`: semantic search over Apstra product documentation, admin guides, and best practices (enabled when RAG is configured)
 
 
