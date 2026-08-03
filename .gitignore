@@ -90,5 +90,10 @@ MANUAL_TEST_SCENARIOS.md
 
 # ── RAG knowledge build inputs ───────────────────────────────────────────────
 knowledge/build/source_pdfs/*.pdf
+knowledge/index.embeddings.json
+
+# ── Setup wizard backups/rollback artifacts ─────────────────────────────────
+.setup-backups/
+*.bak.*
 
 DevDocs*

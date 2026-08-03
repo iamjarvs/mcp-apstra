@@ -15,6 +15,17 @@ pip install -e ".[dev]"
 
 ## 2. Configure one instance
 
+Optional but recommended first pass (preview only):
+
+```bash
+apstra-mcp-setup \
+  --host https://apstra.example.com \
+  --username admin \
+  --dry-run
+```
+
+Then run for real:
+
 ```bash
 apstra-mcp-setup --host https://apstra.example.com --username admin
 ```
@@ -23,6 +34,11 @@ The command prompts for your password and writes:
 
 - `config/instances.yaml`
 - `.vscode/mcp.json`
+
+It also performs a preflight review and, if it updates an existing file, creates:
+
+- file backups (`*.bak.<timestamp>`)
+- rollback script (`.setup-backups/rollback-<timestamp>.sh`)
 
 If you also want Claude Desktop configured automatically:
 

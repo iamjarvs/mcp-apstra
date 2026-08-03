@@ -108,6 +108,15 @@ Basic usage (interactive password prompt):
 apstra-mcp-setup --host https://apstra.example.com --username admin
 ```
 
+Preview everything first (no writes, no embedding build):
+
+```bash
+apstra-mcp-setup \
+  --host https://apstra.example.com \
+  --username admin \
+  --dry-run
+```
+
 Also update Claude Desktop config automatically:
 
 ```bash
@@ -119,6 +128,9 @@ apstra-mcp-setup \
 
 Common flags:
 
+- `--dry-run`: show planned actions without modifying files
+- `--check-endpoint`: run a TCP reachability check during preflight
+- `--ui auto|plain|rich`: choose terminal rendering mode
 - `--overwrite`: replace existing `config/instances.yaml`
 - `--overwrite-mcp-server`: replace existing `apstra` MCP entry
 - `--server-name`: set MCP server key (default: `apstra`)
@@ -127,6 +139,12 @@ Common flags:
 - `--enable-rag`: write the optional `rag` block in `config/instances.yaml`
 - `--build-embeddings`: build `knowledge/index.embeddings.json` from PDFs
 - `--rag-source-dir`: defaults to `knowledge/build/source_pdfs`
+
+Backup and rollback behavior:
+
+- Existing files are backed up before write: `*.bak.<timestamp>`
+- A rollback script is generated at `.setup-backups/rollback-<timestamp>.sh`
+- In `--dry-run`, backup and rollback paths are previewed but not created
 
 ## Quick install
 
@@ -143,7 +161,7 @@ Common flags:
       "env": {
         "APSTRA_HOST": "https://apstra.example.com",
         "APSTRA_USERNAME": "admin",
-        "APSTRA_PASSWORD": "secretpassword"
+        "APSTRA_PASSWORD": "your-strong-password"
       }
     }
   }
@@ -159,13 +177,13 @@ instances:
   - name: dc-primary
     host: https://apstra-prod.example.com
     username: admin
-    password: secretpassword
+    password: your-strong-password
     ssl_verify: false
 
   - name: dc-dr
     host: https://apstra-dr.example.com
     username: admin
-    password: secretpassword
+    password: your-strong-password
     ssl_verify: false
 ```
 
@@ -189,7 +207,7 @@ Per-instance credential overrides are supported:
 
 ```bash
 APSTRA_DC_PRIMARY_USERNAME=admin
-APSTRA_DC_PRIMARY_PASSWORD=secretpassword
+APSTRA_DC_PRIMARY_PASSWORD=your-strong-password
 ```
 
 `dc-primary` becomes `APSTRA_DC_PRIMARY_*` (uppercase, hyphens converted to underscores).
@@ -214,7 +232,7 @@ Create `.vscode/mcp.json`:
       "env": {
         "APSTRA_HOST": "https://apstra.example.com",
         "APSTRA_USERNAME": "admin",
-        "APSTRA_PASSWORD": "secretpassword"
+        "APSTRA_PASSWORD": "your-strong-password"
       }
     }
   }
@@ -251,7 +269,7 @@ For multi-instance:
       "env": {
         "APSTRA_HOST": "https://apstra.example.com",
         "APSTRA_USERNAME": "admin",
-        "APSTRA_PASSWORD": "secretpassword"
+        "APSTRA_PASSWORD": "your-strong-password"
       }
     }
   }
@@ -360,7 +378,7 @@ instances:
   - name: apstra-lab
     host: https://apstra.example.com
     username: admin
-    password: secretpassword
+    password: your-strong-password
 
 rag:
   enabled: true
