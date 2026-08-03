@@ -63,7 +63,7 @@ def test_register_tools_compact_exposes_umbrellas_and_hides_granular_clusters():
     assert "audit" in stub.tools
     assert "get_audit_log" not in stub.tools
     assert "get_device_audit_config" not in stub.tools
-    assert len(stub.tools) == 32
+    assert len(stub.tools) == 33
 
 
 def test_register_tools_full_exposes_umbrellas_and_granular_tools():
@@ -84,7 +84,7 @@ def test_register_tools_full_exposes_umbrellas_and_granular_tools():
     assert "audit" in stub.tools
     assert "get_audit_log" in stub.tools
     assert "get_device_audit_config" in stub.tools
-    assert len(stub.tools) == 57
+    assert len(stub.tools) == 58
 
 
 def test_register_tools_includes_query_apstra_product_docs_when_rag_enabled():
