@@ -2,6 +2,9 @@
 
 The MCP server supports optional documentation RAG (Retrieval-Augmented Generation) for the `query_apstra_product_docs` tool. You can configure it using either YAML or environment variables.
 
+RAG is disabled by default. If you do not enable it, the server runs normally
+without `knowledge/index.embeddings.json`.
+
 ## Fast path (setup CLI)
 
 You can configure RAG and build embeddings in one setup flow:
@@ -16,7 +19,7 @@ apstra-mcp-setup \
   --build-embeddings
 ```
 
-This writes the `rag` block to `config/instances.yaml` and builds
+This writes the `rag` block to `config/instances.yaml` and builds a local
 `knowledge/index.embeddings.json`.
 
 ## Configuration Priority
@@ -202,7 +205,7 @@ When RAG is disabled, the `query_apstra_product_docs` tool will not be registere
 **Q: query_apstra_product_docs tool not appearing**
 - Check MCP server logs for "RAG configuration loaded" message
 - Verify all required environment variables or YAML fields are set
-- Check that knowledge index exists at the expected path
+- Check that a local knowledge index exists at the expected path
 
 **Q: Model mismatch warning**
 - The knowledge index was built with a different model than currently configured

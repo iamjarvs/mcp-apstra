@@ -1,11 +1,13 @@
 # Knowledge index - maintainer guide
 
-This directory stores the committed documentation embedding index used by the
-query_docs MCP tool.
+This directory stores the optional documentation embedding index used by the
+query_docs MCP tool when RAG is enabled.
+
+The index file is local-only and gitignored by default.
 
 ## Contents
 
-- knowledge/index.embeddings.json: committed output index
+- knowledge/index.embeddings.json: local output index (optional, not committed)
 - knowledge/build/build_index.py: CLI index builder
 - knowledge/build/build_index_ui.py: desktop drag-and-drop builder UI
 - knowledge/build/chunker.py: structured chunking logic

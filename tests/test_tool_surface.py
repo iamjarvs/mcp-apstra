@@ -104,3 +104,14 @@ def test_register_tools_skips_query_apstra_product_docs_when_rag_disabled():
 
     server._register_tools(stub, tool_surface="compact", rag_config=None)
     assert "query_apstra_product_docs" not in stub.tools
+
+
+def test_register_tools_does_not_hard_stop_when_rag_config_is_invalid():
+    stub = StubMCP()
+
+    with patch("server.get_rag_config", side_effect=ValueError("bad rag config")):
+        surface = server._register_tools(stub, tool_surface="compact", rag_config=None)
+
+    assert surface == "compact"
+    assert "query_apstra_product_docs" not in stub.tools
+    assert "triage" in stub.tools
