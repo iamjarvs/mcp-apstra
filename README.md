@@ -501,8 +501,12 @@ MCP_VERBOSE=2 python server.py
 ### Connectivity pre-check
 
 ```bash
-python diagnose_connection.py
+python tests/diagnose_connection.py
 ```
+
+Note: some Apstra/controller variants return HTTP `201` for successful
+`/api/aaa/login` responses. The diagnostic treats HTTP `200` and `201` as
+success when a token is present.
 
 ### Auth pre-check
 

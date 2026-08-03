@@ -17,7 +17,6 @@ Tests:
 import asyncio
 import os
 import sys
-from typing import Optional
 
 try:
     import httpx
@@ -59,16 +58,29 @@ async def test_authentication(host: str, username: str, password: str, ssl_verif
                 f"{host}/api/aaa/login",
                 json={"username": username, "password": password},
             )
-            if response.status_code == 200:
-                data = response.json()
+
+            # Some Apstra/controller variants return 201 on successful login.
+            if 200 <= response.status_code < 300:
+                try:
+                    data = response.json()
+                except ValueError:
+                    return False, (
+                        f"✗ Login returned HTTP {response.status_code} but response was not JSON"
+                    )
+
                 if data.get("token"):
-                    return True, f"✓ Authentication successful (token obtained)"
-                else:
-                    return False, f"✗ Login returned 200 but no token in response"
-            elif response.status_code == 401:
+                    return True, (
+                        f"✓ Authentication successful (HTTP {response.status_code}, token obtained)"
+                    )
+
+                return False, (
+                    f"✗ Login returned HTTP {response.status_code} but no token in response"
+                )
+
+            if response.status_code == 401:
                 return False, f"✗ Authentication failed (401 Unauthorized) — check username and password"
-            else:
-                return False, f"✗ Login returned HTTP {response.status_code}: {response.text[:100]}"
+
+            return False, f"✗ Login returned HTTP {response.status_code}: {response.text[:100]}"
     except httpx.ConnectError:
         return False, f"✗ Connection failed — cannot reach {host}"
     except httpx.TimeoutException:

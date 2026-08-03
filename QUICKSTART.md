@@ -74,12 +74,19 @@ Then edit `config/instances.yaml` and set:
 - `password`: your account password
 - `ssl_verify`: `false` for self-signed certs, `true` for CA-signed certs
 
-## 3. Validate auth and run
+## 3. Validate connectivity/auth and run
 
 ```bash
+python tests/diagnose_connection.py
 python auth_test.py
 python server.py
 ```
+
+Notes:
+
+- `tests/diagnose_connection.py` checks host reachability and login end-to-end.
+- Some controllers return HTTP `201` (not `200`) for successful `/api/aaa/login` responses.
+  The diagnostic treats both as success when a token is present.
 
 If auth succeeds, the server starts and is ready for MCP clients.
 
