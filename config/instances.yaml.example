@@ -12,7 +12,7 @@
 # name — uppercased, hyphens replaced with underscores, prefixed with APSTRA_:
 #
 #   APSTRA_DC_PRIMARY_USERNAME=admin
-#   APSTRA_DC_PRIMARY_PASSWORD=secretpassword
+#   APSTRA_DC_PRIMARY_PASSWORD=your-strong-password
 #
 # Environment variables take precedence over values in this file.
 

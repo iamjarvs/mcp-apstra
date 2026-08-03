@@ -99,6 +99,27 @@ async def get_system_configuration(session, device_key: str) -> dict:
     )
 
 
+async def get_active_system_agent_jobs(session) -> dict:
+    """
+    Fetches currently active system-agent jobs for an Apstra instance.
+
+    This is an instance-level endpoint and is not scoped to a blueprint.
+    Active jobs commonly include upgrades, reboots, or connectivity checks that
+    can temporarily explain device instability during troubleshooting.
+    """
+    return await _request(session, "GET", "/api/system-agent-jobs/active-jobs")
+
+
+async def get_system_agents(session) -> dict:
+    """
+    Fetches system-agent inventory for an Apstra instance.
+
+    Used to map active job host IDs back to device identity (system_id,
+    hostname, management IP) before correlating the device to a blueprint.
+    """
+    return await _request(session, "GET", "/api/system-agents")
+
+
 async def get_blueprints(session) -> dict:
     """
     Fetches all blueprints from an Apstra instance.

@@ -52,6 +52,31 @@ class TestTriageBaseline:
         tool = mcp.tools["triage"]
         ctx = _make_ctx()
 
+        active_jobs_result = {
+            "instance": "dc-primary",
+            "has_active_jobs": True,
+            "active_job_count": 1,
+            "active_jobs": [
+                {
+                    "job_id": 10,
+                    "job_type": "upgrade",
+                    "state": "inprogress",
+                    "device": {"hostname": "Leaf1"},
+                    "blueprint_matches": [
+                        {"blueprint_id": "bp-1", "blueprint_label": "DC1"},
+                    ],
+                    "blueprint_match_count": 1,
+                }
+            ],
+            "summary": {
+                "by_job_type": {"upgrade": 1},
+                "by_state": {"inprogress": 1},
+                "impacted_device_count": 1,
+                "impacted_blueprint_count": 1,
+                "impacted_blueprints": ["DC1"],
+            },
+        }
+
         with patch("tools.triage_dispatch.resolve_blueprints",
                    new=AsyncMock(return_value=_SINGLE_BP)):
             with patch("tools.triage_dispatch.handle_get_system_liveness",
@@ -60,11 +85,16 @@ class TestTriageBaseline:
                            "unreachable_count": 0,
                            "liveness_anomalies": [],
                        })):
-                result = _run(tool(intent="baseline", blueprint_id="bp-1", ctx=ctx))
+                with patch("tools.triage_dispatch.handle_get_active_system_agent_jobs",
+                           new=AsyncMock(return_value=active_jobs_result)):
+                    result = _run(tool(intent="baseline", blueprint_id="bp-1", ctx=ctx))
 
         assert result["intent"] == "baseline"
         assert result["all_systems_reachable"] is True
         assert result["blueprint_label"] == "DC1"
+        assert result["active_job_count"] == 1
+        assert result["has_active_jobs"] is True
+        assert result["active_jobs"]["active_jobs"][0]["job_id"] == 10
 
     def test_no_blueprints_returns_error(self):
         mcp = StubMCP()
@@ -88,16 +118,113 @@ class TestTriageBaseline:
             {"all_systems_reachable": False, "unreachable_count": 1, "liveness_anomalies": []},
             {"all_systems_reachable": True,  "unreachable_count": 0, "liveness_anomalies": []},
         ]
+        active_jobs_result = {
+            "instance": "dc-primary",
+            "has_active_jobs": True,
+            "active_job_count": 2,
+            "active_jobs": [
+                {
+                    "job_id": 1,
+                    "job_type": "upgrade",
+                    "state": "inprogress",
+                    "device": {"hostname": "leaf1"},
+                    "blueprint_matches": [
+                        {"blueprint_id": "bp-1", "blueprint_label": "DC1"},
+                    ],
+                    "blueprint_match_count": 1,
+                },
+                {
+                    "job_id": 2,
+                    "job_type": "reboot",
+                    "state": "inprogress",
+                    "device": {"hostname": "leaf2"},
+                    "blueprint_matches": [
+                        {"blueprint_id": "bp-2", "blueprint_label": "DC2"},
+                    ],
+                    "blueprint_match_count": 1,
+                },
+            ],
+            "summary": {
+                "by_job_type": {"upgrade": 1, "reboot": 1},
+                "by_state": {"inprogress": 2},
+                "impacted_device_count": 2,
+                "impacted_blueprint_count": 2,
+                "impacted_blueprints": ["DC1", "DC2"],
+            },
+        }
 
         with patch("tools.triage_dispatch.resolve_blueprints",
                    new=AsyncMock(return_value=_MULTI_BP)):
             with patch("tools.triage_dispatch.handle_get_system_liveness",
                        new=AsyncMock(side_effect=side_effects)):
-                result = _run(tool(intent="baseline", blueprint_id="all", ctx=ctx))
+                with patch("tools.triage_dispatch.handle_get_active_system_agent_jobs",
+                           new=AsyncMock(return_value=active_jobs_result)):
+                    result = _run(tool(intent="baseline", blueprint_id="all", ctx=ctx))
 
         assert result["blueprint_count"] == 2
         assert result["total_unreachable"] == 1
+        assert result["total_active_jobs"] == 2
+        assert result["has_active_jobs"] is True
         assert result["all_systems_reachable"] is False
+
+
+# ── active_jobs intent ───────────────────────────────────────────────────────
+
+class TestTriageActiveJobs:
+    def test_returns_jobs_scoped_to_requested_blueprint(self):
+        mcp = StubMCP()
+        register(mcp)
+        tool = mcp.tools["triage"]
+        ctx = _make_ctx()
+
+        active_jobs_result = {
+            "instance": "dc-primary",
+            "has_active_jobs": True,
+            "active_job_count": 2,
+            "active_jobs": [
+                {
+                    "job_id": 1,
+                    "job_type": "upgrade",
+                    "state": "inprogress",
+                    "device": {"hostname": "leaf1"},
+                    "blueprint_matches": [
+                        {"blueprint_id": "bp-1", "blueprint_label": "DC1"},
+                    ],
+                    "blueprint_match_count": 1,
+                },
+                {
+                    "job_id": 2,
+                    "job_type": "upgrade",
+                    "state": "inprogress",
+                    "device": {"hostname": "leaf2"},
+                    "blueprint_matches": [
+                        {"blueprint_id": "bp-2", "blueprint_label": "DC2"},
+                    ],
+                    "blueprint_match_count": 1,
+                },
+            ],
+            "summary": {
+                "by_job_type": {"upgrade": 2},
+                "by_state": {"inprogress": 2},
+                "impacted_device_count": 2,
+                "impacted_blueprint_count": 2,
+                "impacted_blueprints": ["DC1", "DC2"],
+            },
+        }
+
+        with patch("tools.triage_dispatch.resolve_blueprints",
+                   new=AsyncMock(return_value=_SINGLE_BP)):
+            with patch("tools.triage_dispatch.handle_get_active_system_agent_jobs",
+                       new=AsyncMock(return_value=active_jobs_result)):
+                result = _run(tool(intent="active_jobs", blueprint_id="bp-1", ctx=ctx))
+
+        assert result["intent"] == "active_jobs"
+        assert result["blueprint_ref"] == "bp-1"
+        assert result["active_job_count"] == 1
+        assert result["has_active_jobs"] is True
+        assert len(result["active_jobs"]) == 1
+        assert result["active_jobs"][0]["job_id"] == 1
+        assert result["summary"]["impacted_blueprints"] == ["DC1"]
 
 
 # ── commit_blockers intent ────────────────────────────────────────────────────
@@ -210,6 +337,37 @@ class TestTriageIncidentSnapshot:
             "has_blocking_errors": False,
             "issues": [],
         }
+        active_jobs_result = {
+            "instance": "all",
+            "results": [
+                {
+                    "instance": "dc-primary",
+                    "has_active_jobs": True,
+                    "active_job_count": 1,
+                    "active_jobs": [
+                        {
+                            "job_id": 10,
+                            "job_type": "upgrade",
+                            "state": "inprogress",
+                            "device": {"hostname": "Leaf1"},
+                            "blueprint_matches": [
+                                {"blueprint_id": "bp-1", "blueprint_label": "DC1"},
+                            ],
+                            "blueprint_match_count": 1,
+                        }
+                    ],
+                    "summary": {
+                        "by_job_type": {"upgrade": 1},
+                        "by_state": {"inprogress": 1},
+                        "impacted_device_count": 1,
+                        "impacted_blueprint_count": 1,
+                        "impacted_blueprints": ["DC1"],
+                    },
+                }
+            ],
+            "total_active_jobs": 1,
+            "has_active_jobs": True,
+        }
 
         with patch("tools.triage_dispatch.resolve_blueprints",
                    new=AsyncMock(return_value=_SINGLE_BP)):
@@ -217,14 +375,17 @@ class TestTriageIncidentSnapshot:
                        new=AsyncMock(return_value=liveness_result)):
                 with patch("tools.triage_dispatch.handle_get_blueprint_build_errors",
                            new=AsyncMock(return_value=build_result)):
-                    result = _run(
-                        tool(intent="incident_snapshot", blueprint_id="bp-1", ctx=ctx)
-                    )
+                    with patch("tools.triage_dispatch.handle_get_active_system_agent_jobs",
+                               new=AsyncMock(return_value=active_jobs_result)):
+                        result = _run(
+                            tool(intent="incident_snapshot", blueprint_id="bp-1", ctx=ctx)
+                        )
 
         assert result["intent"] == "incident_snapshot"
         assert result["blueprint_count"] == 1
         snap = result["results"][0]
         assert snap["unreachable_count"] == 0
+        assert snap["active_job_count"] == 1
         assert snap["active_anomaly_count"] == 1
         assert snap["has_blocking_errors"] is False
         assert snap["needs_attention"] is True  # because active anomalies > 0
@@ -246,6 +407,19 @@ class TestTriageIncidentSnapshot:
             "errors_count": 0, "warnings_count": 0,
             "has_blocking_errors": False, "issues": [],
         }
+        active_jobs_result = {
+            "instance": "dc-primary",
+            "has_active_jobs": False,
+            "active_job_count": 0,
+            "active_jobs": [],
+            "summary": {
+                "by_job_type": {},
+                "by_state": {},
+                "impacted_device_count": 0,
+                "impacted_blueprint_count": 0,
+                "impacted_blueprints": [],
+            },
+        }
 
         with patch("tools.triage_dispatch.resolve_blueprints",
                    new=AsyncMock(return_value=_SINGLE_BP)):
@@ -253,9 +427,11 @@ class TestTriageIncidentSnapshot:
                        new=AsyncMock(return_value=liveness_result)):
                 with patch("tools.triage_dispatch.handle_get_blueprint_build_errors",
                            new=AsyncMock(return_value=build_result)):
-                    result = _run(
-                        tool(intent="incident_snapshot", blueprint_id="bp-1", ctx=ctx)
-                    )
+                    with patch("tools.triage_dispatch.handle_get_active_system_agent_jobs",
+                               new=AsyncMock(return_value=active_jobs_result)):
+                        result = _run(
+                            tool(intent="incident_snapshot", blueprint_id="bp-1", ctx=ctx)
+                        )
 
         snap = result["results"][0]
         assert snap["needs_attention"] is True

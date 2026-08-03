@@ -12,10 +12,21 @@ import sqlite3
 import tempfile
 from pathlib import Path
 
-# Set creds before importing project code
-os.environ.setdefault("APSTRA_HOST",     "https://10.28.216.3")
-os.environ.setdefault("APSTRA_USERNAME", "admin")
-os.environ.setdefault("APSTRA_PASSWORD", "admin")
+def _require_env(var_name: str) -> str:
+    value = os.getenv(var_name, "").strip()
+    if not value:
+        raise RuntimeError(
+            f"Missing required environment variable: {var_name}. "
+            "Set APSTRA_HOST, APSTRA_USERNAME, and APSTRA_PASSWORD before running."
+        )
+    return value
+
+
+def _env_bool(var_name: str, default: bool = False) -> bool:
+    raw = os.getenv(var_name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,15 +41,20 @@ from handlers.anomaly_poller import _backfill, BACKFILL_DAYS
 
 
 async def main():
+    host = _require_env("APSTRA_HOST")
+    username = _require_env("APSTRA_USERNAME")
+    password = _require_env("APSTRA_PASSWORD")
+    ssl_verify = _env_bool("APSTRA_SSL_VERIFY", default=False)
+
     tmp = Path(tempfile.mktemp(suffix=".db"))
     store = AnomalyStore(tmp)
 
     session = ApstraSession(
         name="qa",
-        host="https://10.28.216.3",
-        username="admin",
-        password="admin",
-        ssl_verify=False,
+        host=host,
+        username=username,
+        password=password,
+        ssl_verify=ssl_verify,
     )
     await session.authenticate()
     print("✓ Authenticated")

@@ -3,7 +3,11 @@ from typing import Annotated
 from fastmcp import Context
 from pydantic import Field
 
-from handlers.system_health import handle_get_system_liveness, handle_get_config_deviations
+from handlers.system_health import (
+    handle_get_active_system_agent_jobs,
+    handle_get_system_liveness,
+    handle_get_config_deviations,
+)
 from handlers.blueprints import resolve_blueprints
 
 _BP_DESC = (
@@ -15,6 +19,51 @@ _BP_DESC = (
 
 
 def register(mcp):
+
+    @mcp.tool()
+    async def get_active_system_agent_jobs(
+        instance_name: Annotated[
+            str | None,
+            Field(
+                default=None,
+                description=(
+                    "Apstra instance name. Do not ask the user for this — leave as None "
+                    "to query all instances. Only set if the user explicitly names a "
+                    "specific instance."
+                ),
+            ),
+        ] = None,
+        ctx: Context = None,
+    ) -> dict:
+        """
+        Check whether Apstra currently has active system-agent jobs running on devices.
+
+        Prefer `triage` with `intent='active_jobs'` when you want this as part of the
+        standard first-pass troubleshooting workflow.
+
+        CALL THIS EARLY in troubleshooting when symptoms could be explained by simple
+        in-flight operations such as upgrade, reboot, or connectivity-check workflows.
+
+        This tool uses the instance-level active-jobs endpoint, then enriches each job by:
+          - resolving the system-agent host_id to a device identity
+          - mapping the device to blueprint inventory when possible
+
+        If a device has an active job, avoid deep troubleshooting on that device until the
+        job is accounted for. Upgrade and reboot workflows commonly cause transient loss of
+        reachability, agent disconnects, and temporary config churn.
+
+        Returns:
+          has_active_jobs (bool): True when one or more active jobs are present
+          active_job_count (int): Number of in-progress jobs
+          active_jobs (list): Per-job details including device identity and blueprint matches
+          summary (dict): Counts by job type/state and impacted blueprints
+
+        Data source: live Apstra APIs `GET /api/system-agent-jobs/active-jobs` and
+        `GET /api/system-agents`, plus blueprint system inventory correlation.
+        """
+        sessions = ctx.lifespan_context["sessions"]
+        registry = ctx.lifespan_context["graph_registry"]
+        return await handle_get_active_system_agent_jobs(sessions, registry, instance_name)
 
     @mcp.tool()
     async def get_system_liveness(

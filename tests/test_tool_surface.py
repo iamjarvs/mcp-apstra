@@ -53,15 +53,17 @@ def test_register_tools_compact_exposes_umbrellas_and_hides_granular_clusters():
     assert "get_probe_list" not in stub.tools
 
     # Core standalone tools remain.
+    assert "get_active_system_agent_jobs" in stub.tools
     assert "get_system_liveness" in stub.tools
     assert "get_blueprints" in stub.tools
     assert "routing_policy" in stub.tools
     assert "run_device_commands" in stub.tools
+    assert "generate_chart" in stub.tools
     assert "triage" in stub.tools
     assert "audit" in stub.tools
     assert "get_audit_log" not in stub.tools
     assert "get_device_audit_config" not in stub.tools
-    assert len(stub.tools) == 31
+    assert len(stub.tools) == 33
 
 
 def test_register_tools_full_exposes_umbrellas_and_granular_tools():
@@ -78,10 +80,11 @@ def test_register_tools_full_exposes_umbrellas_and_granular_tools():
     assert "get_interface_counters" in stub.tools
     assert "get_virtual_networks" in stub.tools
     assert "get_probe_list" in stub.tools
+    assert "generate_chart" in stub.tools
     assert "audit" in stub.tools
     assert "get_audit_log" in stub.tools
     assert "get_device_audit_config" in stub.tools
-    assert len(stub.tools) == 56
+    assert len(stub.tools) == 58
 
 
 def test_register_tools_includes_query_apstra_product_docs_when_rag_enabled():
@@ -103,3 +106,14 @@ def test_register_tools_skips_query_apstra_product_docs_when_rag_disabled():
 
     server._register_tools(stub, tool_surface="compact", rag_config=None)
     assert "query_apstra_product_docs" not in stub.tools
+
+
+def test_register_tools_does_not_hard_stop_when_rag_config_is_invalid():
+    stub = StubMCP()
+
+    with patch("server.get_rag_config", side_effect=ValueError("bad rag config")):
+        surface = server._register_tools(stub, tool_surface="compact", rag_config=None)
+
+    assert surface == "compact"
+    assert "query_apstra_product_docs" not in stub.tools
+    assert "triage" in stub.tools

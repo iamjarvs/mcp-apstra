@@ -2,6 +2,26 @@
 
 The MCP server supports optional documentation RAG (Retrieval-Augmented Generation) for the `query_apstra_product_docs` tool. You can configure it using either YAML or environment variables.
 
+RAG is disabled by default. If you do not enable it, the server runs normally
+without `knowledge/index.embeddings.json`.
+
+## Fast path (setup CLI)
+
+You can configure RAG and build embeddings in one setup flow:
+
+```bash
+pip install -r knowledge/build/requirements.txt
+# Add PDF files into knowledge/build/source_pdfs
+apstra-mcp-setup \
+  --host https://apstra.example.com \
+  --username your-username \
+  --enable-rag \
+  --build-embeddings
+```
+
+This writes the `rag` block to `config/instances.yaml` and builds a local
+`knowledge/index.embeddings.json`.
+
 ## Configuration Priority
 
 Configuration is resolved in this order:
@@ -16,9 +36,9 @@ Create or update `config/instances.yaml`:
 ```yaml
 instances:
   - name: apstra-lab
-    host: https://10.88.14.100
-    username: admin
-    password: Juniper!123
+    host: https://apstra.example.com
+    username: your-username
+    password: your-strong-password
     ssl_verify: false
 
 # Optional RAG configuration
@@ -62,9 +82,9 @@ In your Claude Desktop config:
       "args": ["/path/to/server.py"],
       "env": {
         "MCP_TRANSPORT": "stdio",
-        "APSTRA_HOST": "https://10.88.14.100",
-        "APSTRA_USERNAME": "admin",
-        "APSTRA_PASSWORD": "Juniper!123",
+        "APSTRA_HOST": "https://apstra.example.com",
+        "APSTRA_USERNAME": "your-username",
+        "APSTRA_PASSWORD": "your-strong-password",
         "APSTRA_RAG_ENABLED": "true",
         "APSTRA_RAG_EMBEDDING_PROVIDER": "ollama",
         "APSTRA_RAG_EMBEDDING_MODEL": "qwen3-embedding",
@@ -185,7 +205,7 @@ When RAG is disabled, the `query_apstra_product_docs` tool will not be registere
 **Q: query_apstra_product_docs tool not appearing**
 - Check MCP server logs for "RAG configuration loaded" message
 - Verify all required environment variables or YAML fields are set
-- Check that knowledge index exists at the expected path
+- Check that a local knowledge index exists at the expected path
 
 **Q: Model mismatch warning**
 - The knowledge index was built with a different model than currently configured

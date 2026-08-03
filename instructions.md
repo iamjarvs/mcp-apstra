@@ -19,7 +19,7 @@ Use it to answer "how do I configure X" or "what is Y" questions. Enable it by c
 | Group | Tools |
 |---|---|
 | Discovery | `get_blueprints`, `get_systems`, `get_interface_list`, `get_link_list`, `virtual_networks` |
-| Health / triage | `get_system_liveness`, `get_config_deviations`, `get_blueprint_build_errors`, `triage`, `anomaly`, `audit` |
+| Health / triage | `get_active_system_agent_jobs`, `get_system_liveness`, `get_config_deviations`, `get_blueprint_build_errors`, `triage`, `anomaly`, `audit` |
 | CLI / config | `run_device_commands`, `get_rendered_config`, `get_system_config_context`, `get_junos_command_categories`, `get_junos_show_commands` |
 | Telemetry | `telemetry` |
 | Anomaly analytics | `anomaly` |
@@ -28,6 +28,7 @@ Use it to answer "how do I configure X" or "what is Y" questions. Enable it by c
 | Design / configlets | `get_blueprint_configlets`, `get_blueprint_property_sets`, `get_design_configlets`, `get_design_property_sets`, `get_blueprint_configlet_drift`, `get_blueprint_property_set_drift` |
 | MTU | `get_fabric_mtu_check` |
 | Routing policy diagnostics | `routing_policy` |
+| Visualization | `generate_chart` |
 | Reference | `get_reference_design_overview`, `get_reference_design_section`, `get_reference_design_context` |
 | Documentation / Knowledge | `query_apstra_product_docs` |
 
@@ -37,8 +38,10 @@ Compact umbrella intent mapping:
 - `telemetry`: `interface_counters`, `interface_utilisation`, `system_telemetry`, `interface_error_trend`, `top_error_growers`
 - `virtual_networks`: `deployments`, `list`, `routing_zones`, `routing_zone_detail`, `virtual_network_detail`
 - `probes`: `list`, `detail`, `history`
-- `triage`: `baseline`, `commit_blockers`, `drift`, `active_anomalies`, `incident_snapshot`
+- `triage`: `baseline` (includes active jobs), `active_jobs`, `commit_blockers`, `drift`, `active_anomalies`, `incident_snapshot`
 - `audit`: `events`, `device_config`
+- `generate_chart`: line, bar, stacked_bar, heatmap, or scatter PNG output from structured series data. If chart URL publishing env vars are enabled, tool also returns a public URL and markdown snippet for inline chat rendering (providers: catbox, postimages, freeimage).
+   - For local testing with certificate-chain issues during upload, `APSTRA_CHART_PUBLISH_INSECURE_SKIP_VERIFY=true` can be used temporarily.
 - `query_apstra_product_docs`: semantic search over Apstra product documentation, admin guides, and best practices (enabled when RAG is configured)
 
 
@@ -106,28 +109,32 @@ You do **not** need to call `get_blueprints` first to obtain an ID — resolutio
 
 ## Conversation start — fabric problem reported
 
-If the user opens a conversation describing a fabric problem, immediately run both
-of the following in parallel before asking clarifying questions:
+If the user opens a conversation describing a fabric problem, immediately run these
+checks in parallel before asking clarifying questions:
 
-1. `get_system_liveness` (`blueprint_id=null`) — establishes which devices Apstra
-   can reach. An unreachable device explains all downstream symptoms on that device.
+1. `triage` with `intent='baseline'` (`blueprint_id=null`) — establishes which devices
+   Apstra can reach and whether any devices currently have active system-agent jobs
+   (upgrades, reboots, connectivity checks). Unreachable devices or in-flight jobs
+   explain many downstream symptoms without requiring deeper protocol analysis.
 2. `anomaly` with `intent='active'` (`blueprint_id=null`) — immediate snapshot of
    what the fabric has already flagged, with no API round-trip to Apstra.
 
-Present both results before proceeding. This establishes a baseline for the whole
+Present these results before proceeding. This establishes a baseline for the whole
 conversation.
 
 ---
 
 ## Triage-first rules
 
-When a user reports a fabric problem you MUST run both of these before investigating individual protocols or interfaces:
+When a user reports a fabric problem you MUST run these checks before investigating individual protocols or interfaces:
 
-1. **`get_system_liveness`** — if a device appears here, ALL downstream symptoms on that device are likely caused by the reachability loss, not individual protocol faults. Present unreachable devices immediately and do NOT attempt CLI commands or counter queries against them.
+1. **`triage` with `intent='baseline'`** — if a device appears here as unreachable, ALL downstream symptoms on that device are likely caused by the reachability loss, not individual protocol faults. If baseline shows active system-agent jobs on a device, rule those out before deep troubleshooting on that device. Present unreachable devices immediately and do NOT attempt CLI commands or counter queries against them.
 
-2. **`get_config_deviations`** — a deviating device was changed outside Apstra (manual CLI commit, script injection, partial push). If a deviated device also shows protocol anomalies, the manual change is the likely root cause — investigate the drift first.
+2. **`triage` with `intent='active_jobs'`** — use this when baseline already shows active jobs and you want the job-focused view by itself, or when the user explicitly asks about in-flight upgrades, reboots, or connectivity checks.
 
-Only proceed to BGP, interface, telemetry, or CLI tools once liveness and config deviation results have been surfaced to the user.
+3. **`triage` with `intent='drift'`** — a deviating device was changed outside Apstra (manual CLI commit, script injection, partial push). If a deviated device also shows protocol anomalies, the manual change is the likely root cause — investigate the drift first.
+
+Only proceed to BGP, interface, telemetry, or CLI tools once liveness, active job state, and config deviation results have been surfaced to the user.
 
 ---
 
@@ -233,6 +240,3 @@ If RAG is not configured, fall back to `get_reference_design_*` tools for archit
 
 ---
 
-## Response formatting
-
-Use Markdown tables for comparative or multi-row data — device lists, anomaly summaries, BGP peerings, interface counters, per-blueprint rollups. Use numbered lists for sequential steps, bullet lists for findings and action items. Keep raw tool output as structured JSON; format the user-facing narrative with tables and lists where it improves readability.

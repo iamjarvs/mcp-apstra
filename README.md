@@ -8,12 +8,15 @@ Current codebase scope (May 2026): compact-by-default MCP tool surface with umbr
 
 ## Table of contents
 
+- [5-minute quickstart](#5-minute-quickstart)
+- [Automated setup CLI](#automated-setup-cli)
 - [What changed recently](#what-changed-recently)
 - [Quick install](#quick-install)
 - [Local development quick start](#local-development-quick-start)
 - [Configuration](#configuration)
 - [Running the server](#running-the-server)
 - [Recommended troubleshooting flow](#recommended-troubleshooting-flow)
+- [Security](#security)
 - [Tool catalog (full surface)](#tool-catalog-full-surface)
 - [Architecture](#architecture)
 - [Data sources and freshness](#data-sources-and-freshness)
@@ -43,6 +46,107 @@ Current codebase scope (May 2026): compact-by-default MCP tool surface with umbr
 - Added compact umbrella dispatchers:
   - `anomaly`, `telemetry`, `virtual_networks`, `probes`
   - Use `MCP_TOOL_SURFACE=full` for legacy per-function tool exposure.
+- Added chart rendering tool:
+  - `generate_chart` renders line/bar/stacked_bar/heatmap/scatter charts and returns PNG images for visual trend analysis.
+
+## 5-minute quickstart
+
+If you just want to get up and running quickly, follow this path.
+For the complete guide, see [QUICKSTART.md](QUICKSTART.md).
+
+```bash
+git clone <your-repo-url>
+cd v2_apstra-mcp-server-v2
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+apstra-mcp-setup --host https://apstra.example.com --username admin
+
+python auth_test.py
+python server.py
+```
+
+The setup command prompts for password securely and writes:
+
+- `config/instances.yaml`
+- `.vscode/mcp.json`
+
+Optional one-shot RAG + embedding build:
+
+```bash
+pip install -r knowledge/build/requirements.txt
+apstra-mcp-setup \
+  --host https://apstra.example.com \
+  --username admin \
+  --enable-rag \
+  --build-embeddings
+```
+
+Optional (run as an MCP server without entering a venv):
+
+```bash
+uvx --from /absolute/path/to/v2_apstra-mcp-server-v2 apstra-mcp
+```
+
+Security notes for quickstart:
+
+- Never commit `config/instances.yaml`.
+- Use strong credentials or per-instance environment variable overrides.
+- Keep `MCP_VERBOSE=0` unless actively troubleshooting.
+
+## Security
+
+See [SECURITY.md](SECURITY.md) for vulnerability reporting and hardening guidance.
+
+## Automated setup CLI
+
+Use `apstra-mcp-setup` to auto-configure local files and MCP config.
+
+Basic usage (interactive password prompt):
+
+```bash
+apstra-mcp-setup --host https://apstra.example.com --username admin
+```
+
+Preview everything first (no writes, no embedding build):
+
+```bash
+apstra-mcp-setup \
+  --host https://apstra.example.com \
+  --username admin \
+  --dry-run
+```
+
+Also update Claude Desktop config automatically:
+
+```bash
+apstra-mcp-setup \
+  --host https://apstra.example.com \
+  --username admin \
+  --configure-claude
+```
+
+Common flags:
+
+- `--dry-run`: show planned actions without modifying files
+- `--check-endpoint`: run a TCP reachability check during preflight
+- `--ui auto|plain|rich`: choose terminal rendering mode
+- `--overwrite`: replace existing `config/instances.yaml`
+- `--overwrite-mcp-server`: replace existing `apstra` MCP entry
+- `--server-name`: set MCP server key (default: `apstra`)
+- `--skip-vscode`: only write instance config (skip `.vscode/mcp.json`)
+- `--non-interactive --password <value>`: CI/automation mode
+- `--enable-rag`: write the optional `rag` block in `config/instances.yaml`
+- `--build-embeddings`: build `knowledge/index.embeddings.json` from PDFs
+- `--rag-source-dir`: defaults to `knowledge/build/source_pdfs`
+
+Backup and rollback behavior:
+
+- Existing files are backed up before write: `*.bak.<timestamp>`
+- A rollback script is generated at `.setup-backups/rollback-<timestamp>.sh`
+- In `--dry-run`, backup and rollback paths are previewed but not created
 
 ## Quick install
 
@@ -59,7 +163,7 @@ Current codebase scope (May 2026): compact-by-default MCP tool surface with umbr
       "env": {
         "APSTRA_HOST": "https://apstra.example.com",
         "APSTRA_USERNAME": "admin",
-        "APSTRA_PASSWORD": "secretpassword"
+        "APSTRA_PASSWORD": "your-strong-password"
       }
     }
   }
@@ -75,13 +179,13 @@ instances:
   - name: dc-primary
     host: https://apstra-prod.example.com
     username: admin
-    password: secretpassword
+    password: your-strong-password
     ssl_verify: false
 
   - name: dc-dr
     host: https://apstra-dr.example.com
     username: admin
-    password: secretpassword
+    password: your-strong-password
     ssl_verify: false
 ```
 
@@ -105,7 +209,7 @@ Per-instance credential overrides are supported:
 
 ```bash
 APSTRA_DC_PRIMARY_USERNAME=admin
-APSTRA_DC_PRIMARY_PASSWORD=secretpassword
+APSTRA_DC_PRIMARY_PASSWORD=your-strong-password
 ```
 
 `dc-primary` becomes `APSTRA_DC_PRIMARY_*` (uppercase, hyphens converted to underscores).
@@ -130,7 +234,7 @@ Create `.vscode/mcp.json`:
       "env": {
         "APSTRA_HOST": "https://apstra.example.com",
         "APSTRA_USERNAME": "admin",
-        "APSTRA_PASSWORD": "secretpassword"
+        "APSTRA_PASSWORD": "your-strong-password"
       }
     }
   }
@@ -167,7 +271,7 @@ For multi-instance:
       "env": {
         "APSTRA_HOST": "https://apstra.example.com",
         "APSTRA_USERNAME": "admin",
-        "APSTRA_PASSWORD": "secretpassword"
+        "APSTRA_PASSWORD": "your-strong-password"
       }
     }
   }
@@ -195,6 +299,7 @@ python server.py
 ```
 
 For stdio MCP clients, `fastmcp run server.py` also works.
+If you want the shortest path, use the `5-minute quickstart` section above.
 
 ## Configuration
 
@@ -241,6 +346,58 @@ instances:
 | `MCP_DATA_DIR` | package-local `data/` | Base path for local SQLite stores |
 | `MCP_ANOMALY_DB_PATH` | `<MCP_DATA_DIR>/anomaly_timeseries.db` | Full path override |
 | `MCP_COUNTER_DB_PATH` | `<MCP_DATA_DIR>/counter_timeseries.db` | Full path override |
+| `APSTRA_CHART_PUBLISH_ENABLED` | `false` | Enable optional chart URL publishing for `generate_chart` |
+| `APSTRA_CHART_PUBLISH_PROVIDER` | `catbox` | `catbox`, `postimages`, or `freeimage` |
+| `APSTRA_CHART_PUBLISH_TIMEOUT_SECONDS` | `20` | HTTP timeout for upload requests |
+| `APSTRA_CHART_PUBLISH_STRICT` | `false` | If `true`, upload failures return tool error instead of falling back to image-only |
+| `APSTRA_CHART_PUBLISH_INSECURE_SKIP_VERIFY` | `false` | If `true`, disables TLS certificate verification for chart upload HTTP calls (testing only) |
+| `APSTRA_CHART_CATBOX_USERHASH` | unset | Optional Catbox user hash for account-linked uploads |
+| `APSTRA_CHART_POSTIMAGES_API_URL` | unset | Required when provider is `postimages`; upload endpoint URL |
+| `APSTRA_CHART_POSTIMAGES_API_KEY` | unset | Optional API key for `postimages` endpoint |
+| `APSTRA_CHART_FREEIMAGE_API_URL` | `https://freeimage.host/api/1/upload` | Freeimage upload endpoint override |
+| `APSTRA_CHART_FREEIMAGE_API_KEY` | unset | Required when provider is `freeimage` |
+
+### Optional: Chart URL publishing for inline markdown
+
+`generate_chart` always returns MCP image content. Some clients (including Claude desktop)
+show that image only in expanded tool output.
+
+For quick testing, you can optionally publish chart PNGs to a temporary host and get
+a markdown-ready URL in tool output.
+
+Catbox example:
+
+```bash
+APSTRA_CHART_PUBLISH_ENABLED=true
+APSTRA_CHART_PUBLISH_PROVIDER=catbox
+```
+
+Postimages example (endpoint varies by account/workflow):
+
+```bash
+APSTRA_CHART_PUBLISH_ENABLED=true
+APSTRA_CHART_PUBLISH_PROVIDER=postimages
+APSTRA_CHART_POSTIMAGES_API_URL=https://<your-postimages-upload-endpoint>
+APSTRA_CHART_POSTIMAGES_API_KEY=<optional-key>
+```
+
+Freeimage example:
+
+```bash
+APSTRA_CHART_PUBLISH_ENABLED=true
+APSTRA_CHART_PUBLISH_PROVIDER=freeimage
+APSTRA_CHART_FREEIMAGE_API_KEY=<your-freeimage-api-key>
+```
+
+When publishing is enabled and upload succeeds, `generate_chart` returns both:
+1. MCP image content (for tool viewers)
+2. `chart_url` and markdown string (`![title](url)`) for inline chat rendering
+
+If upload fails and `APSTRA_CHART_PUBLISH_STRICT` is not set, the tool falls back
+to image-only output and includes `chart_publish_error` metadata instead of failing.
+
+If you see certificate validation failures in local environments, you can temporarily set
+`APSTRA_CHART_PUBLISH_INSECURE_SKIP_VERIFY=true` for testing. Do not use this in production.
 
 ### Optional: RAG (product documentation search)
 
@@ -275,7 +432,7 @@ instances:
   - name: apstra-lab
     host: https://apstra.example.com
     username: admin
-    password: secretpassword
+    password: your-strong-password
 
 rag:
   enabled: true
@@ -390,6 +547,7 @@ Compact mode exposes umbrella tools (`anomaly`, `telemetry`, `virtual_networks`,
 
 | Tool | Purpose |
 |---|---|
+| `get_active_system_agent_jobs` | Detect in-flight device jobs before deeper troubleshooting |
 | `get_system_liveness` | Detect unreachable systems before deeper troubleshooting |
 | `get_config_deviations` | Diff intended vs actual system config |
 | `get_current_anomalies` | Current active anomalies |
@@ -419,6 +577,7 @@ Compact mode exposes umbrella tools (`anomaly`, `telemetry`, `virtual_networks`,
 | `run_device_commands` | Run JunOS show commands via Apstra fetchcmd |
 | `get_rendered_config` | Rendered config by sections/subsections |
 | `routing_policy` | Discover-first routing-policy dispatcher for peer health, policy explanation, hidden routes, RIB comparison, and next-hop resolution |
+| `generate_chart` | Render chart PNGs (line/bar/stacked/heatmap/scatter) from structured series data |
 | `get_reference_design_overview` | Compact index of reference sections |
 | `get_reference_design_section` | Fetch one guide section |
 | `get_reference_design_context` | Full guide content |
@@ -526,6 +685,7 @@ Run focused suites:
 ```text
 .
 |- server.py
+|- setup_cli.py
 |- instructions.md
 |- pyproject.toml
 |- config/
@@ -581,4 +741,7 @@ Dev dependencies:
 
 ## License
 
-MIT
+This project is source-available under the license in [LICENSE](LICENSE).
+
+Commercial product use is not permitted without prior written permission from
+the copyright holder.

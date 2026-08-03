@@ -7,6 +7,9 @@ dependencies = [
     "httpx>=0.28.1",
     "pyyaml>=6.0.3",
     "kuzu>=0.11.3",
+    "pydantic>=2.10.0",
+    "matplotlib>=3.9.0",
+    "pillow>=11.0.0",
 ]
 
 [project.optional-dependencies]
@@ -17,12 +20,14 @@ dev = [
 
 [project.scripts]
 apstra-mcp = "server:main"
+apstra-mcp-setup = "setup_cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["config", "handlers", "primitives", "tools"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "server.py" = "server.py"
+"setup_cli.py" = "setup_cli.py"
 "instructions.md" = "instructions.md"
 "_ref_arch" = "_ref_arch"
 "knowledge" = "knowledge"

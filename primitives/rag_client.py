@@ -100,7 +100,10 @@ def _load_index(config: RagConfig) -> _LoadedIndex:
     if not _INDEX_PATH.exists():
         raise RagIndexMissingError(
             f"Knowledge index not found at '{_INDEX_PATH}'. "
-            "Add knowledge/index.embeddings.json or disable rag.enabled."
+            "RAG docs retrieval is optional. Build a local index at "
+            "knowledge/index.embeddings.json (for example with "
+            "apstra-mcp-setup --enable-rag --build-embeddings), or disable "
+            "RAG by removing rag.enabled / APSTRA_RAG_ENABLED."
         )
 
     with open(_INDEX_PATH, encoding="utf-8") as f:
