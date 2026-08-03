@@ -96,4 +96,7 @@ knowledge/index.embeddings.json
 .setup-backups/
 *.bak.*
 
+# ── Local smoke test reports (generated HTML/JSON) ──────────────────────────
+smoke_reports/
+
 DevDocs*
