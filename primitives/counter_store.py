@@ -433,6 +433,13 @@ class CounterStore:
             return results_with_errors[:top_n]
         return []
 
+    def list_instances(self) -> list[str]:
+        """Return distinct instance names that have interface data stored."""
+        rows = self._con.execute(
+            "SELECT DISTINCT instance_name FROM interfaces ORDER BY instance_name"
+        ).fetchall()
+        return [row[0] for row in rows]
+
     def get_coverage_summary(self, instance_name: str) -> dict:
         """
         Return a summary of what's stored: how many interfaces and snapshots,

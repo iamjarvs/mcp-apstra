@@ -1,0 +1,21 @@
+❯ git clone <your-repo-url> apstra-mcp-server
+❯ cd apstra-mcp-server
+❯ python3 -m venv .venv
+❯ source .venv/bin/activate
+❯ pip install -e ".[dev]"
+Obtaining file:///Users/you/apstra-mcp-server
+  Installing build dependencies: ... done
+  Preparing editable metadata (pyproject.toml): ... done
+Collecting fastmcp>=3.2.0 (from apstra-mcp==0.2.0)
+Collecting httpx>=0.28.1 (from apstra-mcp==0.2.0)
+Collecting kuzu>=0.11.3 (from apstra-mcp==0.2.0)
+Collecting matplotlib>=3.9.0 (from apstra-mcp==0.2.0)
+Collecting pillow>=11.0.0 (from apstra-mcp==0.2.0)
+Collecting pydantic>=2.10.0 (from apstra-mcp==0.2.0)
+Collecting pyyaml>=6.0.3 (from apstra-mcp==0.2.0)
+Collecting pytest-asyncio>=1.3.0 (from apstra-mcp==0.2.0)
+  ... (resolving remaining dependencies) ...
+Building wheels for collected packages: apstra-mcp
+  Building editable for apstra-mcp (pyproject.toml): ... done
+Successfully built apstra-mcp
+Successfully installed apstra-mcp-0.2.0 fastmcp-3.4.5 fastmcp-slim-3.4.5 httpx-0.28.1 httpx-sse-0.4.3 kuzu-0.11.3 matplotlib-3.11.1 pillow-12.3.0 pydantic-2.13.4 pydantic-core-2.46.4 pydantic-settings-2.14.2 pyyaml-6.0.3 (+ 50 more)

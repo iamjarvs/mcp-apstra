@@ -148,6 +148,65 @@ def _default_claude_config_path() -> Path:
     return home / ".config/Claude/claude_desktop_config.json"
 
 
+# ── MCP client targets ────────────────────────────────────────────────────────
+# Desktop/IDE MCP clients that accept the same server entry. VS Code is handled
+# separately because it uses the "servers" root key and is enabled by default;
+# all of the clients below use the Cursor-style "mcpServers" root key.
+_CLIENT_ORDER = ["claude", "cursor", "lmstudio", "antigravity"]
+
+_MCP_CLIENTS: dict[str, dict[str, str]] = {
+    "claude": {"display": "Claude Desktop", "root_key": "mcpServers"},
+    "cursor": {"display": "Cursor", "root_key": "mcpServers"},
+    "lmstudio": {"display": "LM Studio", "root_key": "mcpServers"},
+    "antigravity": {"display": "Antigravity", "root_key": "mcpServers"},
+}
+
+
+def _client_default_path(key: str) -> Path:
+    home = Path.home()
+    if key == "claude":
+        return _default_claude_config_path()
+    if key == "cursor":
+        return home / ".cursor" / "mcp.json"
+    if key == "lmstudio":
+        return home / ".lmstudio" / "mcp.json"
+    if key == "antigravity":
+        return home / ".gemini" / "config" / "mcp_config.json"
+    raise ValueError(f"Unknown MCP client: {key}")
+
+
+def _client_app_bundles(key: str) -> list[str]:
+    return {
+        "claude": ["Claude.app"],
+        "cursor": ["Cursor.app"],
+        "lmstudio": ["LM Studio.app"],
+        "antigravity": ["Antigravity.app", "Google Antigravity.app"],
+    }.get(key, [])
+
+
+def _client_installed(key: str) -> bool:
+    """Best-effort detection of whether an MCP client is present on this machine."""
+    default = _client_default_path(key)
+    markers = [default, default.parent]
+    if key == "antigravity":
+        markers.append(Path.home() / ".gemini")
+    if any(marker.exists() for marker in markers):
+        return True
+    if platform.system().lower() == "darwin":
+        roots = [Path("/Applications"), Path.home() / "Applications"]
+        for bundle in _client_app_bundles(key):
+            if any((root / bundle).exists() for root in roots):
+                return True
+    return False
+
+
+def _resolve_client_path(args: argparse.Namespace, key: str) -> Path:
+    override = getattr(args, f"{key}_config_path", None)
+    if override:
+        return Path(override).expanduser().resolve()
+    return _client_default_path(key).expanduser().resolve()
+
+
 def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -460,6 +519,58 @@ def _write_instances_yaml(
     return backup_path
 
 
+def _write_json_mcp_config(
+    config_path: Path,
+    root_key: str,
+    server_name: str,
+    server_entry: dict[str, Any],
+    overwrite_server: bool,
+    interactive: bool,
+    dry_run: bool,
+) -> Path | None:
+    """
+    Add (or replace) an MCP server entry in a JSON config file.
+
+    Works for every supported client; the only difference between them is the
+    top-level key that holds the server map (VS Code uses "servers", the desktop
+    clients use "mcpServers").
+    """
+    root = _read_json_file(config_path, {root_key: {}})
+    servers = root.get(root_key)
+    if servers is None:
+        servers = {}
+    if not isinstance(servers, dict):
+        raise SystemExit(f"Expected '{root_key}' object in {config_path}")
+
+    if server_name in servers and not overwrite_server:
+        if interactive and _prompt_yes_no(
+            f"Server '{server_name}' already exists in {config_path}. Replace it?",
+            default=False,
+        ):
+            overwrite_server = True
+        else:
+            raise SystemExit(
+                f"Server '{server_name}' already exists in {config_path}. "
+                "Use --overwrite-mcp-server to replace it."
+            )
+
+    servers[server_name] = server_entry
+    root[root_key] = servers
+
+    backup_path: Path | None = None
+    if config_path.exists():
+        backup_path = _backup_target(config_path)
+        if not dry_run:
+            backup_path = _backup_file(config_path)
+
+    if dry_run:
+        return backup_path
+
+    _ensure_parent(config_path)
+    config_path.write_text(json.dumps(root, indent=2) + "\n", encoding="utf-8")
+    return backup_path
+
+
 def _write_vscode_mcp_json(
     mcp_path: Path,
     server_name: str,
@@ -468,86 +579,21 @@ def _write_vscode_mcp_json(
     interactive: bool,
     dry_run: bool,
 ) -> Path | None:
-    root = _read_json_file(mcp_path, {"servers": {}})
-    servers = root.get("servers")
-    if not isinstance(servers, dict):
-        raise SystemExit(f"Expected 'servers' object in {mcp_path}")
-
-    if server_name in servers and not overwrite_server:
-        if interactive and _prompt_yes_no(
-            f"Server '{server_name}' already exists in {mcp_path}. Replace it?",
-            default=False,
-        ):
-            overwrite_server = True
-        else:
-            raise SystemExit(
-                f"Server '{server_name}' already exists in {mcp_path}. "
-                "Use --overwrite-mcp-server to replace it."
-            )
-
-    servers[server_name] = server_entry
-    root["servers"] = servers
-
-    backup_path: Path | None = None
-    if mcp_path.exists():
-        backup_path = _backup_target(mcp_path)
-        if not dry_run:
-            backup_path = _backup_file(mcp_path)
-
-    if dry_run:
-        return backup_path
-
-    _ensure_parent(mcp_path)
-    mcp_path.write_text(json.dumps(root, indent=2) + "\n", encoding="utf-8")
-    return backup_path
+    return _write_json_mcp_config(
+        config_path=mcp_path,
+        root_key="servers",
+        server_name=server_name,
+        server_entry=server_entry,
+        overwrite_server=overwrite_server,
+        interactive=interactive,
+        dry_run=dry_run,
+    )
 
 
 def _backup_file(path: Path) -> Path:
     backup = _backup_target(path)
     backup.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
     return backup
-
-
-def _write_claude_desktop_config(
-    claude_path: Path,
-    server_name: str,
-    server_entry: dict[str, Any],
-    overwrite_server: bool,
-    interactive: bool,
-    dry_run: bool,
-) -> Path | None:
-    root = _read_json_file(claude_path, {"mcpServers": {}})
-    servers = root.get("mcpServers")
-    if not isinstance(servers, dict):
-        raise SystemExit(f"Expected 'mcpServers' object in {claude_path}")
-
-    if server_name in servers and not overwrite_server:
-        if interactive and _prompt_yes_no(
-            f"Server '{server_name}' already exists in {claude_path}. Replace it?",
-            default=False,
-        ):
-            overwrite_server = True
-        else:
-            raise SystemExit(
-                f"Server '{server_name}' already exists in {claude_path}. "
-                "Use --overwrite-mcp-server to replace it."
-            )
-
-    backup_path = None
-    if claude_path.exists():
-        backup_path = _backup_target(claude_path)
-        if not dry_run:
-            backup_path = _backup_file(claude_path)
-
-    servers[server_name] = server_entry
-    root["mcpServers"] = servers
-
-    if dry_run:
-        return backup_path
-
-    _ensure_parent(claude_path)
-    claude_path.write_text(json.dumps(root, indent=2) + "\n", encoding="utf-8")
-    return backup_path
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -618,6 +664,33 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--claude-config-path",
         help="Override Claude Desktop config path",
+    )
+    parser.add_argument(
+        "--configure-cursor",
+        action="store_true",
+        help="Also update Cursor MCP config JSON (~/.cursor/mcp.json)",
+    )
+    parser.add_argument(
+        "--cursor-config-path",
+        help="Override Cursor MCP config path",
+    )
+    parser.add_argument(
+        "--configure-lmstudio",
+        action="store_true",
+        help="Also update LM Studio MCP config JSON (~/.lmstudio/mcp.json)",
+    )
+    parser.add_argument(
+        "--lmstudio-config-path",
+        help="Override LM Studio MCP config path",
+    )
+    parser.add_argument(
+        "--configure-antigravity",
+        action="store_true",
+        help="Also update Antigravity MCP config JSON (~/.gemini/config/mcp_config.json)",
+    )
+    parser.add_argument(
+        "--antigravity-config-path",
+        help="Override Antigravity MCP config path",
     )
     parser.add_argument(
         "--enable-rag",
@@ -815,8 +888,37 @@ def main() -> int:
         configure_vscode = _prompt_yes_no("Configure .vscode/mcp.json?", default=True)
         args.skip_vscode = not configure_vscode
 
-    if interactive and not _arg_provided("--configure-claude"):
-        args.configure_claude = _prompt_yes_no("Configure Claude Desktop MCP config?", default=False)
+    if interactive:
+        _print_section("Additional MCP clients")
+        detected = [
+            key for key in _CLIENT_ORDER
+            if not _arg_provided(f"--configure-{key}") and _client_installed(key)
+        ]
+        for key in detected:
+            display = _MCP_CLIENTS[key]["display"]
+            _print_ok(f"Detected {display}  ({_client_default_path(key)})")
+            setattr(
+                args,
+                f"configure_{key}",
+                _prompt_yes_no(f"Configure {display}?", default=True),
+            )
+        undetected = [
+            key for key in _CLIENT_ORDER
+            if not _arg_provided(f"--configure-{key}") and not _client_installed(key)
+        ]
+        if undetected and _prompt_yes_no(
+            "Configure an MCP client that was not auto-detected?", default=False
+        ):
+            for key in undetected:
+                display = _MCP_CLIENTS[key]["display"]
+                setattr(
+                    args,
+                    f"configure_{key}",
+                    _prompt_yes_no(
+                        f"Configure {display} ({_client_default_path(key)})?",
+                        default=False,
+                    ),
+                )
 
     if interactive and not _arg_provided("--ssl-verify"):
         args.ssl_verify = _prompt_yes_no("Enable TLS certificate verification (ssl_verify)?", default=False)
@@ -927,13 +1029,9 @@ def main() -> int:
             _print_kv("VS Code MCP", "skip")
         else:
             _print_kv(write_label, str(vscode_mcp_path))
-        if args.configure_claude:
-            claude_target = (
-                str(Path(args.claude_config_path).expanduser().resolve())
-                if args.claude_config_path
-                else str(_default_claude_config_path().expanduser().resolve())
-            )
-            _print_kv(write_label, claude_target)
+        for key in _CLIENT_ORDER:
+            if getattr(args, f"configure_{key}"):
+                _print_kv(write_label, str(_resolve_client_path(args, key)))
         _print_kv("RAG", "enabled" if enable_rag else "disabled")
         _print_kv("Build embeddings", "yes" if args.build_embeddings else "no")
         _print_kv("Endpoint check", "yes" if args.check_endpoint else "no")
@@ -953,8 +1051,9 @@ def main() -> int:
     total_steps = 1
     if not args.skip_vscode:
         total_steps += 1
-    if args.configure_claude:
-        total_steps += 1
+    for key in _CLIENT_ORDER:
+        if getattr(args, f"configure_{key}"):
+            total_steps += 1
     if args.build_embeddings:
         total_steps += 1
 
@@ -1000,27 +1099,28 @@ def main() -> int:
             _print_warn(f"{'Would create' if dry_run else 'Created'} backup: {vscode_backup}")
         current_step += 1
 
-    claude_path = None
-    claude_backup = None
-    if args.configure_claude:
-        _print_step(current_step, total_steps, "Writing Claude Desktop MCP configuration")
-        claude_path = (
-            Path(args.claude_config_path).expanduser().resolve()
-            if args.claude_config_path
-            else _default_claude_config_path().expanduser().resolve()
-        )
-        claude_backup = _write_claude_desktop_config(
-            claude_path=claude_path,
+    configured_client_paths: dict[str, Path] = {}
+    for key in _CLIENT_ORDER:
+        if not getattr(args, f"configure_{key}"):
+            continue
+        display = _MCP_CLIENTS[key]["display"]
+        root_key = _MCP_CLIENTS[key]["root_key"]
+        target_path = _resolve_client_path(args, key)
+        _print_step(current_step, total_steps, f"Writing {display} MCP configuration")
+        client_backup = _write_json_mcp_config(
+            config_path=target_path,
+            root_key=root_key,
             server_name=args.server_name,
             server_entry=server_entry,
             overwrite_server=bool(args.overwrite_mcp_server),
             interactive=interactive,
             dry_run=dry_run,
         )
-        _print_ok(f"{'Would write' if dry_run else 'Wrote'} {claude_path}")
-        if claude_backup:
-            backups[claude_path] = claude_backup
-            _print_warn(f"{'Would create' if dry_run else 'Created'} backup: {claude_backup}")
+        _print_ok(f"{'Would write' if dry_run else 'Wrote'} {target_path}")
+        if client_backup:
+            backups[target_path] = client_backup
+            _print_warn(f"{'Would create' if dry_run else 'Created'} backup: {client_backup}")
+        configured_client_paths[key] = target_path
         current_step += 1
 
     embedding_output = None
@@ -1060,8 +1160,10 @@ def main() -> int:
     _print_kv(action_label, str(instances_path))
     if not args.skip_vscode:
         _print_kv(action_label, str(vscode_mcp_path))
-    if claude_path:
-        _print_kv(action_label, str(claude_path))
+    for key in _CLIENT_ORDER:
+        target = configured_client_paths.get(key)
+        if target:
+            _print_kv(action_label, str(target))
     for target_path, backup_path in backups.items():
         _print_kv("Backup", f"{target_path} <= {backup_path}")
     if rollback_script:
@@ -1080,8 +1182,11 @@ def main() -> int:
         print("  2. Re-run without --dry-run to apply changes.")
     else:
         print("  1. Open VS Code and verify MCP server entry in .vscode/mcp.json.")
-        print("  2. If Claude Desktop was configured, restart Claude Desktop.")
+        print("  2. Restart any MCP client you configured (Claude Desktop, Cursor,")
+        print("     LM Studio, Antigravity) so it loads the new server.")
         print("  3. Start using the server via: uvx --from . apstra-mcp")
+        print("  4. After the server has run a few minutes, confirm the background")
+        print("     data collection is healthy: python tests/verify_data_collection.py")
 
     return 0
 

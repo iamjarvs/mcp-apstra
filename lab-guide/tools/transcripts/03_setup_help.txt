@@ -1,0 +1,74 @@
+❯ apstra-mcp-setup --help
+usage: apstra-mcp-setup [-h] [--workspace WORKSPACE] [--ui {auto,plain,rich}]
+                        [--instance-name INSTANCE_NAME] [--host HOST]
+                        [--username USERNAME] [--password PASSWORD]
+                        [--ssl-verify] [--overwrite] [--overwrite-mcp-server]
+                        [--server-name SERVER_NAME] [--non-interactive]
+                        [--check-endpoint] [--dry-run] [--skip-vscode]
+                        [--configure-claude]
+                        [--claude-config-path CLAUDE_CONFIG_PATH]
+                        [--enable-rag] [--build-embeddings]
+                        [--rag-provider {ollama,lmstudio,openai_compatible}]
+                        [--rag-model RAG_MODEL] [--rag-url RAG_URL]
+                        [--rag-top-k RAG_TOP_K]
+                        [--rag-apstra-version RAG_APSTRA_VERSION]
+                        [--rag-source-dir RAG_SOURCE_DIR]
+                        [--rag-output RAG_OUTPUT] [--rag-api-key RAG_API_KEY]
+                        [--chunk-size CHUNK_SIZE]
+                        [--chunk-overlap CHUNK_OVERLAP]
+
+Interactive setup wizard for local apstra-mcp files: config/instances.yaml,
+.vscode/mcp.json, optional Claude Desktop config, and optional RAG embedding
+setup.
+
+options:
+  -h, --help            show this help message and exit
+  --workspace WORKSPACE
+                        Workspace root path
+  --ui {auto,plain,rich}
+                        Terminal UI mode: auto, plain, or rich
+  --instance-name INSTANCE_NAME
+                        Apstra instance name
+  --host HOST           Apstra controller URL, e.g. https://apstra.example.com
+  --username USERNAME   Apstra API username
+  --password PASSWORD   Apstra API password
+  --ssl-verify          Enable TLS certificate verification (default:
+                        disabled)
+  --overwrite           Overwrite existing config/instances.yaml
+  --overwrite-mcp-server
+                        Replace existing server entry in MCP config files
+  --server-name SERVER_NAME
+                        Server key to write in MCP config files (default:
+                        apstra)
+  --non-interactive     Fail instead of prompting for missing
+                        host/username/password
+  --check-endpoint      Run a TCP reachability preflight check against the
+                        Apstra host
+  --dry-run             Preview actions without writing files or running
+                        embedding builds
+  --skip-vscode         Do not write .vscode/mcp.json
+  --configure-claude    Also update Claude Desktop config JSON
+  --claude-config-path CLAUDE_CONFIG_PATH
+                        Override Claude Desktop config path
+  --enable-rag          Write a rag: block into config/instances.yaml
+  --build-embeddings    Build knowledge/index.embeddings.json after writing
+                        config
+  --rag-provider {ollama,lmstudio,openai_compatible}
+                        Embedding provider for rag block and index build
+  --rag-model RAG_MODEL
+                        Embedding model name
+  --rag-url RAG_URL     Embedding endpoint URL
+  --rag-top-k RAG_TOP_K
+                        Top-k retrieval count for RAG queries
+  --rag-apstra-version RAG_APSTRA_VERSION
+                        Apstra version metadata stored in built index
+  --rag-source-dir RAG_SOURCE_DIR
+                        Directory containing source PDFs for embedding build
+  --rag-output RAG_OUTPUT
+                        Output JSON path for embedding index
+  --rag-api-key RAG_API_KEY
+                        Optional bearer token for OpenAI-compatible providers
+  --chunk-size CHUNK_SIZE
+                        Target chunk size for index build
+  --chunk-overlap CHUNK_OVERLAP
+                        Chunk overlap setting for index build

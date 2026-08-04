@@ -1,0 +1,30 @@
+❯ python tests/diagnose_connection.py
+================================================================================
+Apstra MCP Connection Diagnostics
+================================================================================
+
+Found 1 Apstra instance(s) to test:
+
+Instance 1: dc-primary
+  Host: https://apstra.example.com
+  Username: admin
+  SSL Verify: False
+
+  ✗ Connection failed: ConnectError — host may be unreachable or port is blocked
+================================================================================
+✗ Some diagnostics failed. Fix the issues above and try again.
+
+Troubleshooting tips:
+  - If you see 'Connection refused', the host is not reachable. Check:
+    • Is the IP/hostname correct?
+    • Is the Apstra instance running?
+    • Is there a firewall blocking port 443?
+
+  - If you see 'SSL' errors:
+    • Make sure APSTRA_SSL_VERIFY=false (or omit it, defaults to false)
+    • Self-signed certificates are normal for Apstra deployments
+
+  - If you see '401 Unauthorized':
+    • Check your username and password
+    • Verify APSTRA_USERNAME and APSTRA_PASSWORD are set correctly
+

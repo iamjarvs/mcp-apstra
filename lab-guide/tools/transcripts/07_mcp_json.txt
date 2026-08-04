@@ -1,0 +1,16 @@
+❯ cat .vscode/mcp.json
+{
+  "servers": {
+    "apstra": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "~/apstra-mcp-server",
+        "apstra-mcp"
+      ],
+      "env": {
+        "APSTRA_CONFIG_FILE": "~/apstra-mcp-server/config/instances.yaml"
+      }
+    }
+  }
+}

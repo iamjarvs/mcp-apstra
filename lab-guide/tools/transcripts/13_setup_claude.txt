@@ -1,0 +1,7 @@
+❯ apstra-mcp-setup --host https://apstra.example.com --username admin --configure-claude --dry-run
+
+[Preflight review]
+  - [OK] Workspace: ~/apstra-mcp-server
+  - [OK] Config directory: ~/apstra-mcp-server/config
+[1/3] Writing instance configuration
+Refusing to overwrite existing file: ~/apstra-mcp-server/config/instances.yaml. Use --overwrite to replace it.

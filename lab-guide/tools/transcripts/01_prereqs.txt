@@ -1,0 +1,6 @@
+❯ python3 --version
+Python 3.13.5
+❯ git --version
+git version 2.54.0
+❯ uv --version
+uv 0.7.2 (Homebrew 2025-04-30)

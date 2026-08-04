@@ -731,6 +731,39 @@ class AnomalyStore:
             for r in rows
         ]
 
+    # ── Collection health ─────────────────────────────────────────────────────
+
+    def get_collection_status(self) -> dict:
+        """
+        Return a read-only health snapshot of anomaly data collection.
+
+        Reports the per-blueprint poll state (backfill progress and the last poll
+        timestamp) plus overall totals, so an external check can confirm the
+        background poller is actively extracting data from Apstra.
+        """
+        poll_rows = self._con.execute(
+            "SELECT blueprint_id, instance_name, last_poll_at, backfill_complete "
+            "FROM poll_state ORDER BY instance_name, blueprint_id"
+        ).fetchall()
+        poll_states = [
+            {
+                "blueprint_id":      row["blueprint_id"],
+                "instance_name":     row["instance_name"],
+                "last_poll_at":      row["last_poll_at"],
+                "backfill_complete": bool(row["backfill_complete"]),
+            }
+            for row in poll_rows
+        ]
+        anomaly_count = self._con.execute("SELECT COUNT(*) FROM anomalies").fetchone()[0]
+        event_count = self._con.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        newest_event = self._con.execute("SELECT MAX(timestamp) FROM events").fetchone()[0]
+        return {
+            "poll_states":   poll_states,
+            "anomaly_count": anomaly_count,
+            "event_count":   event_count,
+            "newest_event":  newest_event,
+        }
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def close(self):

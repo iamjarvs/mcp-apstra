@@ -1,0 +1,26 @@
+❯ python server.py
+
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│                                                                              │
+│                         ▄▀▀ ▄▀█ █▀▀ ▀█▀ █▀▄▀█ █▀▀ █▀█                        │
+│                         █▀  █▀█ ▄▄█  █  █ ▀ █ █▄▄ █▀▀                        │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                FastMCP 3.4.5                                 │
+│                            https://gofastmcp.com                             │
+│                                                                              │
+│                  🖥  Server:      apstra-mcp, 3.4.5                           │
+│                  🚀 Deploy free: https://horizon.prefect.io                  │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+
+14:15:09 [INFO] primitives.anomaly_store: AnomalyStore opened: ~/apstra-mcp-server/data/anomaly_timeseries.db
+14:15:09 [INFO] primitives.counter_store: CounterStore opened: ~/apstra-mcp-server/data/counter_timeseries.db
+14:15:09 [WARNING] primitives.auth_manager: [dc-primary] Connection error to https://apstra.example.com: ConnectError. Ensure the host is reachable and APSTRA_SSL_VERIFY is set correctly (defaults to false for self-signed certs). Will retry in 15 seconds.
+14:15:09 [ERROR] root: Failed to authenticate session 'dc-primary' at startup: ConnectError: [Errno 8] nodename nor servname provided, or not known. Background refresh will retry every 15 seconds.
+[08/04/26 14:15:09] INFO     Starting MCP server 'apstra-mcp'   transport.py:241
+                             with transport 'stdio'                             

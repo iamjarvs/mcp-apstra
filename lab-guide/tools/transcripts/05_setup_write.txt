@@ -1,0 +1,19 @@
+❯ apstra-mcp-setup --host https://apstra.example.com --username admin
+
+[Preflight review]
+  - [OK] Workspace: ~/apstra-mcp-server
+  - [OK] Config directory: ~/apstra-mcp-server/config
+[1/2] Writing instance configuration
+[OK] Wrote ~/apstra-mcp-server/config/instances.yaml
+[2/2] Writing VS Code MCP configuration
+[OK] Wrote ~/apstra-mcp-server/.vscode/mcp.json
+
+[Completion]
+[OK] Setup complete.
+  - Wrote: ~/apstra-mcp-server/config/instances.yaml
+  - Wrote: ~/apstra-mcp-server/.vscode/mcp.json
+
+[Next steps]
+  1. Open VS Code and verify MCP server entry in .vscode/mcp.json.
+  2. If Claude Desktop was configured, restart Claude Desktop.
+  3. Start using the server via: uvx --from . apstra-mcp

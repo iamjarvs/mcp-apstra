@@ -1,0 +1,18 @@
+❯ apstra-mcp-setup --host https://apstra.example.com --username admin --dry-run
+
+[Preflight review]
+  - [OK] Workspace: ~/apstra-mcp-server
+  - [OK] Config directory: ~/apstra-mcp-server/config
+[1/2] Writing instance configuration
+[OK] Would write ~/apstra-mcp-server/config/instances.yaml
+[2/2] Writing VS Code MCP configuration
+[OK] Would write ~/apstra-mcp-server/.vscode/mcp.json
+
+[Completion]
+[OK] Dry-run complete.
+  - Would write: ~/apstra-mcp-server/config/instances.yaml
+  - Would write: ~/apstra-mcp-server/.vscode/mcp.json
+
+[Next steps]
+  1. Review the planned changes above.
+  2. Re-run without --dry-run to apply changes.

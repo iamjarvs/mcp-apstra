@@ -128,6 +128,10 @@ apstra-mcp-setup \
   --configure-claude
 ```
 
+When run interactively, the wizard also **auto-detects installed MCP clients** (Claude
+Desktop, Cursor, LM Studio, and the Gemini Antigravity IDE) and offers to configure each
+one it finds. Target them explicitly in automation with the matching flags below.
+
 Common flags:
 
 - `--dry-run`: show planned actions without modifying files
@@ -137,6 +141,10 @@ Common flags:
 - `--overwrite-mcp-server`: replace existing `apstra` MCP entry
 - `--server-name`: set MCP server key (default: `apstra`)
 - `--skip-vscode`: only write instance config (skip `.vscode/mcp.json`)
+- `--configure-claude` / `--claude-config-path`: write/override Claude Desktop config
+- `--configure-cursor` / `--cursor-config-path`: write/override Cursor config (`~/.cursor/mcp.json`)
+- `--configure-lmstudio` / `--lmstudio-config-path`: write/override LM Studio config (`~/.lmstudio/mcp.json`)
+- `--configure-antigravity` / `--antigravity-config-path`: write/override Antigravity config (`~/.gemini/config/mcp_config.json`)
 - `--non-interactive --password <value>`: CI/automation mode
 - `--enable-rag`: write the optional `rag` block in `config/instances.yaml`
 - `--build-embeddings`: build `knowledge/index.embeddings.json` from PDFs
@@ -282,6 +290,34 @@ After code changes:
 
 ```bash
 uvx --from /absolute/path/to/v2_apstra-mcp-server-v2 --reinstall apstra-mcp
+```
+
+### Cursor, LM Studio, and Antigravity
+
+These clients use the same `mcpServers` entry as Claude Desktop — only the config file
+location differs. The setup CLI can write any of them (`--configure-cursor`,
+`--configure-lmstudio`, `--configure-antigravity`) or auto-detect them interactively.
+
+| Client | Config path | Root key |
+|--------|-------------|----------|
+| Cursor | `~/.cursor/mcp.json` | `mcpServers` |
+| LM Studio (v0.3.17+) | `~/.lmstudio/mcp.json` | `mcpServers` |
+| Antigravity (Gemini IDE) | `~/.gemini/config/mcp_config.json` | `mcpServers` |
+
+> **Ollama is not an MCP host.** Ollama is a model runtime and does not consume this server
+> via an MCP config file. Its role here is the optional RAG embedding provider (see the RAG
+> section). To drive these tools with an Ollama-served model, use an MCP host such as LM
+> Studio and point it at the server.
+
+### Verify background data collection
+
+The server runs two background pollers (anomaly timeline ~every 60s, interface counters
+~every 5 min) that write to local SQLite stores under `data/`. After the server has been
+running for a few minutes, confirm collection is healthy:
+
+```bash
+python tests/verify_data_collection.py          # human-readable report (exits non-zero if stale/empty)
+python tests/verify_data_collection.py --json    # machine-readable
 ```
 
 ## Local development quick start
